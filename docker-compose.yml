@@ -1,0 +1,34 @@
+version: "3.8"
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=changeme
+    ports:
+      - "9200:9200"
+    networks:
+      - niso-net
+
+  api:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/code
+    working_dir: /code
+    environment:
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=changeme
+    depends_on:
+      - elasticsearch
+    ports:
+      - "8000:8000"
+    networks:
+      - niso-net
+
+networks:
+  niso-net:
+    driver: bridge
