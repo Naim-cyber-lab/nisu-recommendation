@@ -1,8 +1,8 @@
 from typing import List
 from fastapi import APIRouter
-from ...schemas import WinkerIn, EventIn
-from ...repositories.winkers import index_winker, bulk_index_winkers
-from ...repositories.events import index_event, bulk_index_events
+from schemas import WinkerIn, EventIn
+from repositories.winkers import index_winker, bulk_index_winkers
+from repositories.events import index_event, bulk_index_events
 
 router = APIRouter()
 

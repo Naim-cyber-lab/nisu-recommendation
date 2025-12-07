@@ -8,4 +8,5 @@ ELASTICSEARCH_USERNAME = os.getenv("ELASTICSEARCH_USERNAME", "elastic")
 ELASTICSEARCH_PASSWORD = os.getenv("ELASTICSEARCH_PASSWORD", "changeme")
 
 USERS_INDEX = "nisu_users"
+INDEX_WINKERS = "nisu_winkers"
 EVENTS_INDEX = "nisu_events"
