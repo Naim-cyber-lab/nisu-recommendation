@@ -1,6 +1,6 @@
-from ..core.es import es
-from ..core.config import INDEX_WINKERS
-from ..schemas import WinkerIn
+from app.core.es import es
+from app.core.config import INDEX_WINKERS
+from app.schemas import WinkerIn
 from typing import List
 
 
