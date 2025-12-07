@@ -1,9 +1,9 @@
 from typing import List
-from ..core.es import es
-from ..core.config import INDEX_WINKERS, INDEX_EVENTS
-from ..schemas import RecommendedWinker, RecommendedEvent, WinkerOut, EventOut
-from ..repositories.winkers import get_winker_from_es
-from ..repositories.events import get_event_from_es
+from app.core.es import es
+from app.core.config import INDEX_WINKERS, INDEX_EVENTS
+from app.schemas import RecommendedWinker, RecommendedEvent, WinkerOut, EventOut
+from app.repositories.winkers import get_winker_from_es
+from app.repositories.events import get_event_from_es
 
 
 def recommend_winkers_for_winker(winker_id: int, size: int = 10) -> List[RecommendedWinker]:
