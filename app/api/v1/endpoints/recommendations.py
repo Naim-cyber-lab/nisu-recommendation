@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from typing import List
-from ..schemas import RecommendedWinker, RecommendedEvent
-from ..services.recommendations import (
+from app.schemas import RecommendedWinker, RecommendedEvent
+from app.services.recommendations import (
     recommend_winkers_for_winker,
     recommend_events_for_winker,
 )
