@@ -11,8 +11,6 @@ services:
       - ELASTICSEARCH_URL=http://elasticsearch:9200
       - ELASTICSEARCH_USERNAME=elastic
       - ELASTICSEARCH_PASSWORD=changeme
-    depends_on:
-      - elasticsearch
     ports:
       - "8000:8000"
     networks:
