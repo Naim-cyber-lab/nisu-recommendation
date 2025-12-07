@@ -1,6 +1,7 @@
 from typing import List
 from pydantic import BaseModel
 
+from fastapi import APIRouter
 
 # app/embedding.py
 
@@ -10,6 +11,7 @@ from sentence_transformers import SentenceTransformer
 _MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 _model: SentenceTransformer | None = None
 
+router = APIRouter()
 
 def _get_model() -> SentenceTransformer:
     """
@@ -44,7 +46,7 @@ class EmbeddingResponse(BaseModel):
     dimension: int
 
 
-@app.post("/embeddings", response_model=EmbeddingResponse, tags=["embeddings"])
+@router.post("/embeddings", response_model=EmbeddingResponse, tags=["embeddings"])
 def create_embedding(payload: EmbeddingRequest):
     """
     Génère l'embedding du texte fourni.
