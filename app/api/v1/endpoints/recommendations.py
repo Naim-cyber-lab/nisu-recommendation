@@ -2,7 +2,6 @@
 from fastapi import APIRouter, HTTPException
 from typing import List, Any
 
-from es import NotFoundError
 from app.core.es import es_client
 
 router = APIRouter()
@@ -36,8 +35,5 @@ def get_all_conversation_activity(size: int = 1000):
             }
             for hit in hits
         ]
-
-    except NotFoundError:
-        raise HTTPException(status_code=404, detail=f"Index '{INDEX_NAME}' introuvable")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
