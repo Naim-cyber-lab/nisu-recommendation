@@ -1,26 +1,43 @@
+# app/api/conversation_activity.py
 from fastapi import APIRouter, HTTPException
-from typing import List
-from app.schemas import RecommendedWinker, RecommendedEvent
-from app.services.recommendations import (
-    recommend_winkers_for_winker,
-    recommend_events_for_winker,
-)
+from typing import List, Any
+
+from es import NotFoundError
+from app.core.es import es_client
 
 router = APIRouter()
 
-
-@router.get("/winkers/{winker_id}", response_model=List[RecommendedWinker])
-def recommend_winkers_endpoint(winker_id: int, size: int = 10):
-    recos = recommend_winkers_for_winker(winker_id, size=size)
-    if not recos:
-        # à toi de voir si tu veux 200 ou 404
-        return []
-    return recos
+INDEX_NAME = "conversation_activity"
 
 
-@router.get("/events/{winker_id}", response_model=List[RecommendedEvent])
-def recommend_events_endpoint(winker_id: int, size: int = 10):
-    recos = recommend_events_for_winker(winker_id, size=size)
-    if not recos:
-        return []
-    return recos
+@router.get(
+    "/conversation-activity",
+    response_model=List[dict]  # ou List[Any] / un Pydantic model si tu veux typer propre
+)
+def get_all_conversation_activity(size: int = 1000):
+    """
+    Retourne tous les documents (jusqu'à `size`) de l'index conversation_activity.
+    """
+    try:
+        # requête très simple : tout l'index
+        resp = es_client.search(
+            index=INDEX_NAME,
+            query={"match_all": {}},
+            size=size,
+        )
+
+        hits = resp["hits"]["hits"]
+
+        # On renvoie juste le _source + l'_id
+        return [
+            {
+                "id": hit["_id"],
+                **hit["_source"],
+            }
+            for hit in hits
+        ]
+
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail=f"Index '{INDEX_NAME}' introuvable")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

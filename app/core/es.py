@@ -8,7 +8,7 @@ from .config import (
     INDEX_CONVERSATIONS,
 )
 
-es = Elasticsearch(
+es_client = Elasticsearch(
     ELASTICSEARCH_URL,
     basic_auth=(ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASSWORD),
     verify_certs=False,  # à durcir en prod
