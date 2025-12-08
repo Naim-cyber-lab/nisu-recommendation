@@ -87,11 +87,11 @@ CONVERSATION_MAPPING = {
 
 
 def init_indices():
-    if not es.indices.exists(index=INDEX_WINKERS):
-        es.indices.create(index=INDEX_WINKERS, **WINKER_MAPPING)
+    if not es_client.indices.exists(index=INDEX_WINKERS):
+        es_client.indices.create(index=INDEX_WINKERS, **WINKER_MAPPING)
 
-    if not es.indices.exists(index=INDEX_EVENTS):
-        es.indices.create(index=INDEX_EVENTS, **EVENT_MAPPING)
+    if not es_client.indices.exists(index=INDEX_EVENTS):
+        es_client.indices.create(index=INDEX_EVENTS, **EVENT_MAPPING)
 
-    if not es.indices.exists(index=INDEX_CONVERSATIONS):
-        es.indices.create(index=INDEX_CONVERSATIONS, **CONVERSATION_MAPPING)
+    if not es_client.indices.exists(index=INDEX_CONVERSATIONS):
+        es_client.indices.create(index=INDEX_CONVERSATIONS, **CONVERSATION_MAPPING)
