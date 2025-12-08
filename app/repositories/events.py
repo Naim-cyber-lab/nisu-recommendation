@@ -1,4 +1,4 @@
-from ..core.es import es
+from ..core.es import es_client
 from ..core.config import INDEX_EVENTS
 from ..schemas import EventIn
 from typing import List
@@ -34,7 +34,7 @@ def index_event(e: EventIn) -> None:
     if e.vectorPreferenceEvent is not None:
         doc["vectorPreferenceEvent"] = e.vectorPreferenceEvent
 
-    es.index(index=INDEX_EVENTS, id=e.id, document=doc)
+    es_client.index(index=INDEX_EVENTS, id=e.id, document=doc)
 
 
 def bulk_index_events(events: List[EventIn]) -> None:
@@ -79,4 +79,4 @@ def bulk_index_events(events: List[EventIn]) -> None:
 
         actions.append(doc)
 
-    bulk(es, actions)
+    bulk(es_client, actions)

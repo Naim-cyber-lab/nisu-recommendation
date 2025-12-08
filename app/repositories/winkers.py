@@ -1,4 +1,4 @@
-from app.core.es import es
+from app.core.es import es_client
 from app.core.config import INDEX_WINKERS
 from app.schemas import WinkerIn
 from typing import List
@@ -64,4 +64,4 @@ def bulk_index_winkers(winkers: List[WinkerIn]) -> None:
 
     # bulk helper
     from elasticsearch.helpers import bulk
-    bulk(es, actions)
+    bulk(es_client, actions)
