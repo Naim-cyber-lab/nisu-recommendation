@@ -1,17 +1,17 @@
 from typing import List
 from pydantic import BaseModel
-
 from fastapi import APIRouter
-
-# app/embedding.py
-
-from typing import List
 from sentence_transformers import SentenceTransformer
-
-_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-_model: SentenceTransformer | None = None
+import math
 
 router = APIRouter()
+
+# 🔥 Modèle plus puissant que all-MiniLM-L6-v2
+# - Meilleure qualité sémantique
+# - Vecteurs de dimension 768
+_MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
+_model: SentenceTransformer | None = None
+
 
 def _get_model() -> SentenceTransformer:
     """
@@ -23,18 +23,35 @@ def _get_model() -> SentenceTransformer:
     return _model
 
 
-def get_embedding(text: str) -> List[float]:
+def _l2_normalize(vec: List[float]) -> List[float]:
+    """
+    Optionnel : normalisation L2 de l'embedding.
+    Utile si tu utilises beaucoup la cosine similarity.
+    """
+    norm = math.sqrt(sum(x * x for x in vec))
+    if norm == 0:
+        return vec
+    return [x / norm for x in vec]
+
+
+def get_embedding(text: str, normalize: bool = True) -> List[float]:
     """
     Prend un texte en entrée et renvoie son embedding
     sous forme de liste de floats.
+    - Utilise un modèle plus puissant (all-mpnet-base-v2)
+    - Normalise L2 par défaut (pratique pour similarity)
     """
     if not isinstance(text, str):
         raise TypeError("text must be a string")
 
     model = _get_model()
     vector = model.encode(text)
-    return vector.tolist()
+    vec_list = vector.tolist()
 
+    if normalize:
+        vec_list = _l2_normalize(vec_list)
+
+    return vec_list
 
 
 class EmbeddingRequest(BaseModel):
@@ -44,6 +61,7 @@ class EmbeddingRequest(BaseModel):
 class EmbeddingResponse(BaseModel):
     embedding: List[float]
     dimension: int
+    model_name: str
 
 
 @router.post("/embeddings", response_model=EmbeddingResponse, tags=["embeddings"])
@@ -51,6 +69,11 @@ def create_embedding(payload: EmbeddingRequest):
     """
     Génère l'embedding du texte fourni.
     Visible et testable dans Swagger (/docs).
+    Utilise le modèle all-mpnet-base-v2 (dimension 768).
     """
     vec = get_embedding(payload.text)
-    return EmbeddingResponse(embedding=vec, dimension=len(vec))
+    return EmbeddingResponse(
+        embedding=vec,
+        dimension=len(vec),
+        model_name=_MODEL_NAME,
+    )
