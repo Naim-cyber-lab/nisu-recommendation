@@ -39,7 +39,7 @@ def get_all_conversation_activity(size: int = 1000):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/get_rencontre_from_winker/{user_id}")
+@router.get("/get_rencontre_from_winker/{user_id}")
 def get_profil_winker_raw(user_id: int):
     with get_conn() as conn:
         with conn.cursor() as cur:
