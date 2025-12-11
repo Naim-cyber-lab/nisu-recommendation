@@ -10,6 +10,5 @@ services:
     - ELASTICSEARCH_USERNAME=elastic
     - ELASTICSEARCH_PASSWORD=changeme
     -  DATABASE_URL= "postgresql://myuser:mypassword@192.168.1.208:5432/mydatabase"
-
-    ports:
-      - "8000:8000"
+  ports:
+    - "8000:8000"
