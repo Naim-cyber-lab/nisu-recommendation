@@ -39,6 +39,8 @@ def get_all_conversation_activity(size: int = 1000):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+from fastapi import HTTPException
+
 @router.get("/get_rencontre_from_winker/{user_id}")
 def get_profil_winker_raw(user_id: int):
     with get_conn() as conn:
@@ -49,9 +51,10 @@ def get_profil_winker_raw(user_id: int):
             )
             row = cur.fetchone()
 
-    if row is None:
-        raise HTTPException(status_code=404, detail="Profil introuvable")
+            if row is None:
+                raise HTTPException(status_code=404, detail="Profil introuvable")
 
-    # Ici row est un tuple; tu peux soit mapper les colonnes à la main,
-    # soit utiliser un DictCursor, soit laisser brut.
-    return {"result": row}
+            # noms des colonnes dans l’ordre du SELECT
+            columns = [desc[0] for desc in cur.description]
+
+    return dict(zip(columns, row))
