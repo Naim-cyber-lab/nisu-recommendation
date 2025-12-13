@@ -9,7 +9,7 @@ router = APIRouter()
 
 # ---- Config ----
 ES_INDEX = "nisu_events"
-ES_HOST = os.getenv("ES_HOST", "http://localhost:9200")
+ES_HOST = os.getenv("ES_HOST", "http://192.168.1.213:9200")
 ES_USER = os.getenv("ES_USER")
 ES_PASS = os.getenv("ES_PASS")
 
