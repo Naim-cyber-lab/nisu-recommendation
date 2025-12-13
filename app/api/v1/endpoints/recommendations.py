@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 import requests
 from elasticsearch import Elasticsearch
 import os
+from app.core.db import *
 
 router = APIRouter()
 
@@ -80,7 +81,6 @@ def parse_geo(w: Dict[str, Any]) -> Optional[Dict[str, float]]:
 # ---- Ta route existante (inchangée) ----
 @router.get("/get_rencontre_from_winker/{user_id}")
 def get_profil_winker_raw(user_id: int):
-    from .db import get_conn  # adapte à ton projet
 
     with get_conn() as conn:
         with conn.cursor() as cur:
