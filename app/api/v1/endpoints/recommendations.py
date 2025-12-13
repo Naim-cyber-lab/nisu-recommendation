@@ -1,60 +1,189 @@
-# app/api/conversation_activity.py
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
-from typing import List, Any
-from app.core.db import *
-from app.core.es import es_client
+import requests
+from elasticsearch import Elasticsearch
+import os
 
 router = APIRouter()
 
-INDEX_NAME = "conversation_activity"
+# ---- Config ----
+ES_INDEX = "nisu_events"
+ES_HOST = os.getenv("ES_HOST", "http://localhost:9200")
+ES_USER = os.getenv("ES_USER")
+ES_PASS = os.getenv("ES_PASS")
 
+EMBEDDINGS_URL = "https://recommendation.nisu.fr/api/v1/recommendations/embeddings"
+EMBEDDINGS_TIMEOUT = 60
 
-@router.get(
-    "/conversation-activity",
-    response_model=List[dict]  # ou List[Any] / un Pydantic model si tu veux typer propre
+es = Elasticsearch(
+    [ES_HOST],
+    basic_auth=(ES_USER, ES_PASS) if ES_USER and ES_PASS else None,
 )
-def get_all_conversation_activity(size: int = 1000):
+
+# ---- Helpers ----
+
+def get_embedding(text: str) -> List[float]:
+    if not text or not text.strip():
+        return []
+    r = requests.post(
+        EMBEDDINGS_URL,
+        json={"text": text},
+        timeout=EMBEDDINGS_TIMEOUT,
+    )
+    r.raise_for_status()
+    data = r.json()
+    vec = data.get("embedding")
+    if not isinstance(vec, list) or len(vec) == 0:
+        return []
+    return vec
+
+
+def build_winker_profile_text(w: Dict[str, Any]) -> str:
     """
-    Retourne tous les documents (jusqu'à `size`) de l'index conversation_activity.
+    Construit un texte stable qui représente le profil du winker.
+    Tu peux l’ajuster selon tes champs vraiment utiles.
     """
+    parts: List[str] = []
+
+    bio = (w.get("bio") or "").strip()
+    if bio:
+        parts.append(bio)
+
+    # localisation
+    city = (w.get("city") or "").strip()
+    region = (w.get("region") or "").strip()
+    subregion = (w.get("subregion") or "").strip()
+    if city or region or subregion:
+        parts.append(" ".join([p for p in [city, subregion, region] if p]))
+
+    # dernière recherche event (souvent super signal)
+    last_search = (w.get("derniereRechercheEvent") or "").strip()
+    if last_search and last_search not in ("{}", "[]", "null"):
+        parts.append(last_search)
+
+    # si tu stockes des tags/prefer dans d'autres champs, ajoute-les ici
+
+    return " | ".join(parts).strip()
+
+
+def parse_geo(w: Dict[str, Any]) -> Optional[Dict[str, float]]:
+    lat = w.get("lat")
+    lon = w.get("lon")
     try:
-        # requête très simple : tout l'index
-        resp = es_client.search(
-            index=INDEX_NAME,
-            query={"match_all": {}},
-            size=size,
-        )
-
-        hits = resp["hits"]["hits"]
-
-        # On renvoie juste le _source + l'_id
-        return [
-            {
-                "id": hit["_id"],
-                **hit["_source"],
-            }
-            for hit in hits
-        ]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        if lat is None or lon is None:
+            return None
+        return {"lat": float(lat), "lon": float(lon)}
+    except Exception:
+        return None
 
 
-from fastapi import HTTPException
-
+# ---- Ta route existante (inchangée) ----
 @router.get("/get_rencontre_from_winker/{user_id}")
 def get_profil_winker_raw(user_id: int):
+    from .db import get_conn  # adapte à ton projet
+
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT * FROM profil_winker WHERE id = %s",
-                (user_id,),
-            )
+            cur.execute("SELECT * FROM profil_winker WHERE id = %s", (user_id,))
             row = cur.fetchone()
-
             if row is None:
                 raise HTTPException(status_code=404, detail="Profil introuvable")
-
-            # noms des colonnes dans l’ordre du SELECT
             columns = [desc[0] for desc in cur.description]
 
     return dict(zip(columns, row))
+
+
+# ---- Nouvelle route : top 4 events ----
+@router.get("/get_events_for_winker/{user_id}")
+def get_events_for_winker(user_id: int) -> Dict[str, Any]:
+    # 1) récupère le winker
+    winker = get_profil_winker_raw(user_id)
+
+    # 2) texte profil -> embedding
+    profile_text = build_winker_profile_text(winker)
+    if not profile_text:
+        raise HTTPException(status_code=400, detail="Profil trop vide pour recommander des events (bio/recherche/localisation absents).")
+
+    qvec = get_embedding(profile_text)
+    if not qvec:
+        raise HTTPException(status_code=500, detail="Impossible de générer l'embedding du profil.")
+
+    # 3) filtre geo optionnel (tu peux le désactiver si tu veux)
+    user_geo = parse_geo(winker)
+
+    # 4) requête ES : kNN + rescore boost + geo filter (optionnel)
+    knn_query: Dict[str, Any] = {
+        "field": "embedding_vector",
+        "query_vector": qvec,
+        "k": 50,                 # on récupère + que 4 pour laisser le rescore/filters faire le tri
+        "num_candidates": 200
+    }
+
+    base_query: Dict[str, Any] = {"match_all": {}}
+
+    # Optionnel : limiter aux events proches (ex: 200km)
+    # Si tu veux un rayon différent, ajuste "distance"
+    if user_geo:
+        base_query = {
+            "bool": {
+                "filter": [
+                    {
+                        "geo_distance": {
+                            "distance": "200km",
+                            "localisation": user_geo
+                        }
+                    }
+                ]
+            }
+        }
+
+    body: Dict[str, Any] = {
+        "size": 4,
+        "query": base_query,
+        "knn": knn_query,
+
+        # Rescore sur les top N résultats knn, en ajoutant le champ boost
+        # Ici boost * 0.05 => à calibrer selon ton échelle de boost
+        "rescore": {
+            "window_size": 50,
+            "query": {
+                "rescore_query": {
+                    "function_score": {
+                        "query": {"match_all": {}},
+                        "functions": [
+                            {
+                                "field_value_factor": {
+                                    "field": "boost",
+                                    "factor": 0.05,
+                                    "missing": 0
+                                }
+                            }
+                        ],
+                        "boost_mode": "sum",
+                        "score_mode": "sum"
+                    }
+                },
+                "query_weight": 1.0,
+                "rescore_query_weight": 1.0
+            }
+        }
+    }
+
+    resp = es.search(index=ES_INDEX, body=body)
+
+    hits = resp.get("hits", {}).get("hits", [])
+    events = []
+    for h in hits:
+        src = h.get("_source", {})
+        events.append({
+            "id": h.get("_id"),
+            "score": h.get("_score"),
+            **src
+        })
+
+    return {
+        "user_id": user_id,
+        "profile_text_used": profile_text,
+        "count": len(events),
+        "events": events
+    }
