@@ -1,72 +1,87 @@
-from typing import List, Optional
-from datetime import date, datetime
-from pydantic import BaseModel
+from typing import Any, List, Optional
+from pydantic import BaseModel, ConfigDict
 
-
-# ---------- WINKER ----------
-
-class WinkerIn(BaseModel):
+class WinkerOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
     id: int
-    username: str
+    username: Optional[str] = None
     email: Optional[str] = None
-    sexe: Optional[str] = None          # "Masculin" / "Feminin" / etc.
-    age: Optional[int] = None           # calculé à partir de birth / birthYear côté Django
-    city: Optional[str] = None
-    region: Optional[str] = None
-    subregion: Optional[str] = None
-    pays: Optional[str] = None
-    lat: Optional[float] = None
-    lon: Optional[float] = None
-    visible_tags: List[str] = []        # dérivées de VisiblePreferenceWinker.party/sport/...
-    preference_vector: Optional[List[float]] = None  # len 16
-    meet_eligible: Optional[bool] = None
-    mails_eligible: Optional[bool] = None
-
-
-class WinkerOut(WinkerIn):
-    score: Optional[float] = None
-
-
-# ---------- EVENT ----------
-
-class EventIn(BaseModel):
-    id: int
-    titre: Optional[str] = None
-    bioEvent: Optional[str] = None
+    photoProfil: Optional[str] = None
+    sexe: Optional[str] = None
     city: Optional[str] = None
     region: Optional[str] = None
     subregion: Optional[str] = None
     pays: Optional[str] = None
     codePostal: Optional[str] = None
-    lat: Optional[float] = None
     lon: Optional[float] = None
-    dateEvent: Optional[date] = None
-    datePublication: Optional[date] = None
+    lat: Optional[float] = None
+    currentLangue: Optional[str] = None
+
+class ParticipeWinkerOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    rang: Optional[int] = None
+    nbUnseen: Optional[int] = None
+    dateOrder: Optional[str] = None
+    participeWinker: Optional[WinkerOut] = None
+
+class EventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    creatorWinker: Optional[WinkerOut] = None
+    participants: List[ParticipeWinkerOut] = []
+
+    # champs Event (reprend la liste de ton serializer, tu peux compléter au fur et à mesure)
+    titre: Optional[str] = None
+    datePublication: Optional[str] = None
+    adresse: Optional[str] = None
+    city: Optional[str] = None
+    region: Optional[str] = None
+    subregion: Optional[str] = None
+    pays: Optional[str] = None
+    codePostal: Optional[str] = None
+
     ageMinimum: Optional[int] = None
     ageMaximum: Optional[int] = None
+
+    accessOuvert: Optional[bool] = None
+    accessTous: Optional[bool] = None
     accessFille: Optional[bool] = None
     accessGarcon: Optional[bool] = None
-    accessTous: Optional[bool] = None
-    hastagEvents: List[str] = []              # hashtags déjà splittés côté Django
-    meetEligible: Optional[bool] = None
-    planTripElligible: Optional[bool] = None
+    accessFollow: Optional[bool] = None
+    accessFollower: Optional[bool] = None
+
+    bioEvent: Optional[str] = None
+    bioEvent_fr: Optional[str] = None
+    titre_fr: Optional[str] = None
+
+    moyenneAge: Optional[int] = None
+    nbFille: Optional[int] = None
+    nbGarcon: Optional[int] = None
+    nbComment: Optional[int] = None
+    numberView: Optional[int] = None
+
+    lon: Optional[float] = None
+    lat: Optional[float] = None
+
+    detailsAddress: Optional[str] = None
+    accessComment: Optional[bool] = None
+
+    containReduction: Optional[bool] = None
+    prixInitial: Optional[float] = None
+    prixReduction: Optional[float] = None
+    textReduction: Optional[str] = None
+
+    needReservation: Optional[str] = None
+    linkReservation: Optional[str] = None
+
     currentNbParticipants: Optional[int] = None
     maxNumberParticipant: Optional[int] = None
     isFull: Optional[bool] = None
-    vectorPreferenceEvent: Optional[List[float]] = None  # len 16
 
-
-class EventOut(EventIn):
-    score: Optional[float] = None
-
-
-# ---------- RECO OUTPUT ----------
-
-class RecommendedWinker(BaseModel):
-    winker: WinkerOut
-    score: float
-
-
-class RecommendedEvent(BaseModel):
-    event: EventOut
-    score: float
+    website: Optional[str] = None
+    urlGoogleMapsAvis: Optional[str] = None
+    urlAjoutGoogleMapsAvis: Optional[str] = None
+    nb_conversations: Optional[int] = None
+    nbStories: Optional[int] = None

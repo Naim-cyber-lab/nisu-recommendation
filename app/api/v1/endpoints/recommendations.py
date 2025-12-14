@@ -4,6 +4,9 @@ import requests
 from elasticsearch import Elasticsearch
 import os
 from app.core.db import *
+from app.mappings import *
+from app.schemas import *
+from app.api.v1.sql.fetch_events_with_relations_by_ids import *
 
 router = APIRouter()
 
@@ -94,45 +97,34 @@ def get_profil_winker_raw(user_id: int):
 
 
 # ---- Nouvelle route : top 4 events ----
-@router.get("/get_events_for_winker/{user_id}")
-def get_events_for_winker(user_id: int) -> Dict[str, Any]:
-    # 1) récupère le winker
+
+@router.get("/get_events_for_winker/{user_id}", response_model=List[EventOut])
+def get_events_for_winker(user_id: int) -> List[EventOut]:
     winker = get_profil_winker_raw(user_id)
 
-    # 2) texte profil -> embedding
     profile_text = build_winker_profile_text(winker)
     if not profile_text:
-        raise HTTPException(status_code=400, detail="Profil trop vide pour recommander des events (bio/recherche/localisation absents).")
+        raise HTTPException(status_code=400, detail="Profil trop vide pour recommander des events.")
 
     qvec = get_embedding(profile_text)
     if not qvec:
         raise HTTPException(status_code=500, detail="Impossible de générer l'embedding du profil.")
 
-    # 3) filtre geo optionnel (tu peux le désactiver si tu veux)
     user_geo = parse_geo(winker)
 
-    # 4) requête ES : kNN + rescore boost + geo filter (optionnel)
     knn_query: Dict[str, Any] = {
         "field": "embedding_vector",
         "query_vector": qvec,
-        "k": 50,                 # on récupère + que 4 pour laisser le rescore/filters faire le tri
+        "k": 50,
         "num_candidates": 200
     }
 
     base_query: Dict[str, Any] = {"match_all": {}}
-
-    # Optionnel : limiter aux events proches (ex: 200km)
-    # Si tu veux un rayon différent, ajuste "distance"
     if user_geo:
         base_query = {
             "bool": {
                 "filter": [
-                    {
-                        "geo_distance": {
-                            "distance": "200km",
-                            "localisation": user_geo
-                        }
-                    }
+                    {"geo_distance": {"distance": "200km", "localisation": user_geo}}
                 ]
             }
         }
@@ -141,9 +133,6 @@ def get_events_for_winker(user_id: int) -> Dict[str, Any]:
         "size": 4,
         "query": base_query,
         "knn": knn_query,
-
-        # Rescore sur les top N résultats knn, en ajoutant le champ boost
-        # Ici boost * 0.05 => à calibrer selon ton échelle de boost
         "rescore": {
             "window_size": 50,
             "query": {
@@ -151,13 +140,7 @@ def get_events_for_winker(user_id: int) -> Dict[str, Any]:
                     "function_score": {
                         "query": {"match_all": {}},
                         "functions": [
-                            {
-                                "field_value_factor": {
-                                    "field": "boost",
-                                    "factor": 0.05,
-                                    "missing": 0
-                                }
-                            }
+                            {"field_value_factor": {"field": "boost", "factor": 0.05, "missing": 0}}
                         ],
                         "boost_mode": "sum",
                         "score_mode": "sum"
@@ -166,24 +149,31 @@ def get_events_for_winker(user_id: int) -> Dict[str, Any]:
                 "query_weight": 1.0,
                 "rescore_query_weight": 1.0
             }
-        }
+        },
+        "_source": False,  # on veut juste les ids
     }
 
     resp = es.search(index=ES_INDEX, body=body)
-
     hits = resp.get("hits", {}).get("hits", [])
-    events = []
-    for h in hits:
-        src = h.get("_source", {})
-        events.append({
-            "id": h.get("_id"),
-            "score": h.get("_score"),
-            **src
-        })
 
-    return {
-        "user_id": user_id,
-        "profile_text_used": profile_text,
-        "count": len(events),
-        "events": events
-    }
+    event_ids: List[int] = []
+    for h in hits:
+        try:
+            event_ids.append(int(h.get("_id")))
+        except Exception:
+            continue
+
+    if not event_ids:
+        return []
+
+    # ====== ICI: tu remplaces par TON accès DB (SQLAlchemy / raw SQL / repo) ======
+    # Objectif: récupérer Event + creatorWinker + participants + participants.participeWinker
+    events_orm = fetch_events_with_relations_by_ids(event_ids)
+    # ============================================================================
+
+    # préserver l'ordre ES
+    by_id = {e.id: e for e in events_orm}
+    ordered = [by_id[eid] for eid in event_ids if eid in by_id]
+
+    return [to_event_out(e) for e in ordered]
+
