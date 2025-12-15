@@ -7,6 +7,7 @@ from app.core.db import *
 from app.mappings import *
 from app.schemas import *
 from app.api.v1.sql.fetch_events_with_relations_by_ids import *
+from app.embeddings.service import embed_text
 
 router = APIRouter()
 
@@ -26,21 +27,9 @@ es = Elasticsearch(
 
 # ---- Helpers ----
 
-def get_embedding(text: str) -> List[float]:
-    if not text or not text.strip():
-        return []
-    r = requests.post(
-        EMBEDDINGS_URL,
-        json={"text": text},
-        timeout=EMBEDDINGS_TIMEOUT,
-    )
-    r.raise_for_status()
-    data = r.json()
-    vec = data.get("embedding")
-    if not isinstance(vec, list) or len(vec) == 0:
-        return []
-    return vec
 
+def get_embedding(text: str) -> List[float]:
+    return embed_text(text, normalize=True)
 
 def build_winker_profile_text(w: Dict[str, Any]) -> str:
     """

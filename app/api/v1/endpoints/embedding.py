@@ -1,8 +1,10 @@
 from typing import List
 from pydantic import BaseModel
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from sentence_transformers import SentenceTransformer
 import math
+from app.embeddings.service import embed_text, get_model_name
+
 
 router = APIRouter()
 
@@ -66,14 +68,13 @@ class EmbeddingResponse(BaseModel):
 
 @router.post("/embeddings", response_model=EmbeddingResponse, tags=["embeddings"])
 def create_embedding(payload: EmbeddingRequest):
-    """
-    Génère l'embedding du texte fourni.
-    Visible et testable dans Swagger (/docs).
-    Utilise le modèle all-mpnet-base-v2 (dimension 768).
-    """
-    vec = get_embedding(payload.text)
+    vec = embed_text(payload.text, normalize=True)
+
+    if not vec:
+        raise HTTPException(status_code=400, detail="Text is empty or embedding is empty.")
+
     return EmbeddingResponse(
         embedding=vec,
         dimension=len(vec),
-        model_name=_MODEL_NAME,
+        model_name=get_model_name(),
     )
