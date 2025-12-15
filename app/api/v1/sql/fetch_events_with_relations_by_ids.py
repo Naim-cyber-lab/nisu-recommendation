@@ -93,10 +93,10 @@ SELECT
 FROM input_ids i
 JOIN profil_event e ON e.id = i.id
 
-LEFT JOIN winker cw
+LEFT JOIN profil_winker cw
     ON cw.id = e."creatorWinker_id"
 
-LEFT JOIN participe_winker pw
+LEFT JOIN profil_participe_winker pw
     ON pw."event_id" = e.id
     AND pw."groupPrive_id" IS NULL
 
