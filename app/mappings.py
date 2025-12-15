@@ -8,7 +8,7 @@ def to_event_out(e: Dict[str, Any]) -> EventOut:
     if isinstance(files_raw, str):  # au cas où psycopg renvoie du JSON en texte
         files_raw = json.loads(files_raw)
 
-    files =
+    files = [FilesEventOut.model_validate(x) for x in files_raw]
     return EventOut(
         id=e.get("id"),
         creatorWinker=WinkerOut.model_validate(creator) if creator else None,
