@@ -48,11 +48,28 @@ SELECT
     e."urlAjoutGoogleMapsAvis",
     e."nb_conversations",
     e."nbStories",
+
     to_jsonb(cw.*) AS "creatorWinker",
-    '[]'::jsonb AS participants
+    '[]'::jsonb AS participants,
+
+    COALESCE(
+        jsonb_agg(
+            jsonb_build_object(
+                'id', fe.id,
+                'image', fe.image,
+                'video', fe.video,
+                'event_id', fe.event_id
+            )
+            ORDER BY fe.id ASC
+        ) FILTER (WHERE fe.id IS NOT NULL),
+        '[]'::jsonb
+    ) AS "filesEvent"
+
 FROM input_ids i
 JOIN profil_event e ON e.id = i.id
 LEFT JOIN profil_winker cw ON cw.id = e."creatorWinker_id"
+LEFT JOIN profil_filesEvent fe ON fe.event_id = e.id
+
 GROUP BY i.ord, e.id, cw.id
 ORDER BY i.ord;
 """
