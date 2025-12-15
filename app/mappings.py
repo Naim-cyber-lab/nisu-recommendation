@@ -2,8 +2,8 @@ from app.schemas import *
 
 def to_event_out(e) -> EventOut:
     return EventOut(
-        id=e.id,
-        creatorWinker=WinkerOut.model_validate(e.creatorWinker) if getattr(e, "creatorWinker", None) else None,
+        id=e.get("id"),
+        creatorWinker=WinkerOut.model_validate(e.get("creatorWinker")) if getattr(e, "creatorWinker", None) else None,
         participants=[
             ParticipeWinkerOut(
                 id=p.id,

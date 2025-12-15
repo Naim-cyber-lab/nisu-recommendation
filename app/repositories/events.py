@@ -34,7 +34,7 @@ def index_event(e: EventIn) -> None:
     if e.vectorPreferenceEvent is not None:
         doc["vectorPreferenceEvent"] = e.vectorPreferenceEvent
 
-    es_client.index(index=INDEX_EVENTS, id=e.id, document=doc)
+    es_client.index(index=INDEX_EVENTS, id=e.get("id"), document=doc)
 
 
 def bulk_index_events(events: List[EventIn]) -> None:
