@@ -8,6 +8,7 @@ from app.mappings import *
 from app.schemas import *
 from app.api.v1.sql.fetch_events_with_relations_by_ids import *
 from app.embeddings.service import embed_text
+from app.api.v1.sql.fetch_winkers_by_ids import *
 
 router = APIRouter()
 
@@ -240,7 +241,7 @@ def get_winkers_for_winker(
         "_source": False,  # on veut juste les ids (puis SQL)
     }
 
-    resp = es.search(index=WINKERS_INDEX, body=body)
+    resp = es.search(index="nisu_winkers", body=body)
     hits = resp.get("hits", {}).get("hits", [])
 
     winker_ids: List[int] = []
