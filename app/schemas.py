@@ -17,6 +17,22 @@ class WinkerOut(BaseModel):
     lat: Optional[float] = None
     currentLangue: Optional[str] = None
 
+class WinkerIn(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    username: Optional[str] = None
+    email: Optional[str] = None
+    photoProfil: Optional[str] = None
+    sexe: Optional[str] = None
+    city: Optional[str] = None
+    region: Optional[str] = None
+    subregion: Optional[str] = None
+    pays: Optional[str] = None
+    codePostal: Optional[str] = None
+    lon: Optional[float] = None
+    lat: Optional[float] = None
+    currentLangue: Optional[str] = None
+
 class ParticipeWinkerOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
