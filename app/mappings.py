@@ -1,13 +1,19 @@
 from app.schemas import *
 from typing import Any, Dict
+import json
 
 def to_event_out(e: Dict[str, Any]) -> EventOut:
     creator = e.get("creatorWinker")
+    files_raw = e.get("filesEvent") or []
+    if isinstance(files_raw, str):  # au cas où psycopg renvoie du JSON en texte
+        files_raw = json.loads(files_raw)
+
+    files =
     return EventOut(
         id=e.get("id"),
         creatorWinker=WinkerOut.model_validate(creator) if creator else None,
         participants=[],  # tu as '[]'::jsonb côté SQL
-
+        filesEvent=files,
         titre=e.get("titre"),
         datePublication=str(e.get("datePublication")) if e.get("datePublication") else None,
         adresse=e.get("adresse"),
