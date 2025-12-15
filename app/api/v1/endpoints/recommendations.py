@@ -172,7 +172,7 @@ def get_events_for_winker(user_id: int) -> List[EventOut]:
     # ============================================================================
 
     # préserver l'ordre ES
-    by_id = {e.id: e for e in events_orm}
+    by_id = {e.get("id"): e for e in events_orm}
     ordered = [by_id[eid] for eid in event_ids if eid in by_id]
 
     return [to_event_out(e) for e in ordered]
