@@ -1,70 +1,58 @@
 from app.schemas import *
+from typing import Any, Dict
 
-def to_event_out(e) -> EventOut:
+def to_event_out(e: Dict[str, Any]) -> EventOut:
+    creator = e.get("creatorWinker")
     return EventOut(
         id=e.get("id"),
-        creatorWinker=WinkerOut.model_validate(e.get("creatorWinker")) if getattr(e, "creatorWinker", None) else None,
-        participants=[
-            ParticipeWinkerOut(
-                id=p.id,
-                rang=getattr(p, "rang", None),
-                nbUnseen=getattr(p, "nbUnseen", None),
-                dateOrder=str(getattr(p, "dateOrder", None)) if getattr(p, "dateOrder", None) else None,
-                participeWinker=WinkerOut.model_validate(p.participeWinker) if getattr(p, "participeWinker", None) else None,
-            )
-            for p in (getattr(e, "participants", None) or [])
-        ],
+        creatorWinker=WinkerOut.model_validate(creator) if creator else None,
+        participants=[],  # tu as '[]'::jsonb côté SQL
 
-        titre=getattr(e, "titre", None),
-        datePublication=str(getattr(e, "datePublication", None)) if getattr(e, "datePublication", None) else None,
-        adresse=getattr(e, "adresse", None),
-        city=getattr(e, "city", None),
-        region=getattr(e, "region", None),
-        subregion=getattr(e, "subregion", None),
-        pays=getattr(e, "pays", None),
-        codePostal=getattr(e, "codePostal", None),
+        titre=e.get("titre"),
+        datePublication=str(e.get("datePublication")) if e.get("datePublication") else None,
+        adresse=e.get("adresse"),
+        city=e.get("city"),
+        region=e.get("region"),
+        subregion=e.get("subregion"),
+        pays=e.get("pays"),
+        codePostal=e.get("codePostal"),
 
-        ageMinimum=getattr(e, "ageMinimum", None),
-        ageMaximum=getattr(e, "ageMaximum", None),
+        bioEvent=e.get("bioEvent"),
+        bioEvent_fr=e.get("bioEvent_fr"),
+        titre_fr=e.get("titre_fr"),
+        audio=e.get("audio"),
 
-        accessOuvert=getattr(e, "accessOuvert", None),
-        accessTous=getattr(e, "accessTous", None),
-        accessFille=getattr(e, "accessFille", None),
-        accessGarcon=getattr(e, "accessGarcon", None),
-        accessFollow=getattr(e, "accessFollow", None),
-        accessFollower=getattr(e, "accessFollower", None),
+        lon=e.get("lon"),
+        lat=e.get("lat"),
 
-        bioEvent=getattr(e, "bioEvent", None),
-        bioEvent_fr=getattr(e, "bioEvent_fr", None),
-        titre_fr=getattr(e, "titre_fr", None),
+        accessComment=e.get("accessComment"),
+        containReduction=e.get("containReduction"),
+        prixInitial=e.get("prixInitial"),
+        prixReduction=e.get("prixReduction"),
 
-        moyenneAge=getattr(e, "moyenneAge", None),
-        nbFille=getattr(e, "nbFille", None),
-        nbGarcon=getattr(e, "nbGarcon", None),
-        nbComment=getattr(e, "nbComment", None),
-        numberView=getattr(e, "numberView", None),
-
-        lon=getattr(e, "lon", None),
-        lat=getattr(e, "lat", None),
-
-        detailsAddress=getattr(e, "detailsAddress", None),
-        accessComment=getattr(e, "accessComment", None),
-
-        containReduction=getattr(e, "containReduction", None),
-        prixInitial=getattr(e, "prixInitial", None),
-        prixReduction=getattr(e, "prixReduction", None),
-        textReduction=getattr(e, "textReduction", None),
-
-        needReservation=getattr(e, "needReservation", None),
-        linkReservation=getattr(e, "linkReservation", None),
-
-        currentNbParticipants=getattr(e, "currentNbParticipants", None),
-        maxNumberParticipant=getattr(e, "maxNumberParticipant", None),
-        isFull=getattr(e, "isFull", None),
-
-        website=getattr(e, "website", None),
-        urlGoogleMapsAvis=getattr(e, "urlGoogleMapsAvis", None),
-        urlAjoutGoogleMapsAvis=getattr(e, "urlAjoutGoogleMapsAvis", None),
-        nb_conversations=getattr(e, "nb_conversations", None),
-        nbStories=getattr(e, "nbStories", None),
+        firstPreference=e.get("firstPreference"),
+        firstPhotoLocalisation=e.get("firstPhotoLocalisation"),
+        remarque=e.get("remarque"),
+        priceEvent=e.get("priceEvent"),
+        horaireDebut=e.get("horaireDebut"),
+        textForSearchingBar=e.get("textForSearchingBar"),
+        vectorPreferenceEvent=e.get("vectorPreferenceEvent"),
+        hastagEvents=e.get("hastagEvents"),
+        textReduction=e.get("textReduction"),
+        currentLangue=e.get("currentLangue"),
+        importanteInformation=e.get("importanteInformation"),
+        needReservation=e.get("needReservation"),
+        linkReservation=e.get("linkReservation"),
+        isFull=e.get("isFull"),
+        detailsAddress=e.get("detailsAddress"),
+        currentNbParticipants=e.get("currentNbParticipants"),
+        maxNumberParticipant=e.get("maxNumberParticipant"),
+        nbComment=e.get("nbComment"),
+        website=e.get("website"),
+        urlGoogleMapsAvis=e.get("urlGoogleMapsAvis"),
+        urlAjoutGoogleMapsAvis=e.get("urlAjoutGoogleMapsAvis"),
+        nb_conversations=e.get("nb_conversations"),
+        nbStories=e.get("nbStories"),
     )
+
+
