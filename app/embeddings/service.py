@@ -1,15 +1,21 @@
 # app/embeddings/service.py
-from typing import List
+from typing import List, Optional
 from sentence_transformers import SentenceTransformer
 import math
+import os
 
-_MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
-_model: SentenceTransformer | None = None
+_MODEL_NAME = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-mpnet-base-v2")
+_DEVICE = os.getenv("EMBEDDING_DEVICE", "cpu")  # "cpu" safe en docker
+_model: Optional[SentenceTransformer] = None
+
+def get_model_name() -> str:
+    return _MODEL_NAME
 
 def _get_model() -> SentenceTransformer:
     global _model
     if _model is None:
-        _model = SentenceTransformer(_MODEL_NAME)
+        # IMPORTANT: charge directement sur le device, évite .to(device) ensuite
+        _model = SentenceTransformer(_MODEL_NAME, device=_DEVICE)
     return _model
 
 def _l2_normalize(vec: List[float]) -> List[float]:
