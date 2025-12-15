@@ -1,5 +1,5 @@
 from typing import Any, List, Optional
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 class WinkerOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -41,12 +41,24 @@ class ParticipeWinkerOut(BaseModel):
     dateOrder: Optional[str] = None
     participeWinker: Optional[WinkerOut] = None
 
+
+class FilesEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    image: Optional[str] = None
+    video: Optional[str] = None
+    event_id: Optional[int] = None
+
+
 class EventOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     creatorWinker: Optional[WinkerOut] = None
     participants: List[ParticipeWinkerOut] = []
+
+    filesEvent: List[FilesEventOut] = Field(default_factory=list)  # ✅ AJOUTE ÇA
+
 
     # champs Event (reprend la liste de ton serializer, tu peux compléter au fur et à mesure)
     titre: Optional[str] = None
