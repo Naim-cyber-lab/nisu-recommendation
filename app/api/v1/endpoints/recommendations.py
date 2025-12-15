@@ -167,8 +167,6 @@ def get_events_for_winker(user_id: int) -> List[EventOut]:
     return [to_event_out(e) for e in ordered]
 
 
-
-
 @router.get("/get_winkers_for_winker/{user_id}")
 def get_winkers_for_winker(
     user_id: int,
