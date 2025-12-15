@@ -1,3 +1,6 @@
+from app.core.db import *
+
+
 FETCH_EVENTS_SQL = """
 WITH input_ids AS (
     SELECT *
@@ -104,21 +107,15 @@ GROUP BY i.ord, e.id, cw.id
 ORDER BY i.ord;
 """
 
-
-def fetch_events_with_relations_by_ids(conn, event_ids: list[int]) -> list[dict]:
-    """
-    Retourne une liste d'events au format serializer-like :
-    - champs Event à plat
-    - creatorWinker: dict
-    - participants: list[dict] avec participeWinker imbriqué
-    L'ordre est STRICTEMENT celui de event_ids.
-    """
+def fetch_events_with_relations_by_ids(event_ids: list[int]) -> list[dict]:
     if not event_ids:
         return []
 
-    with conn.cursor() as cur:
-        cur.execute(FETCH_EVENTS_SQL, (event_ids,))
-        columns = [desc[0] for desc in cur.description]
-        rows = cur.fetchall()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(FETCH_EVENTS_SQL, (event_ids,))
+            columns = [desc[0] for desc in cur.description]
+            rows = cur.fetchall()
 
     return [dict(zip(columns, row)) for row in rows]
+
