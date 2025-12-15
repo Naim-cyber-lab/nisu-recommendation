@@ -166,3 +166,117 @@ def get_events_for_winker(user_id: int) -> List[EventOut]:
 
     return [to_event_out(e) for e in ordered]
 
+
+
+
+@router.get("/get_winkers_for_winker/{user_id}")
+def get_winkers_for_winker(
+    user_id: int,
+    limit: int = Query(12, ge=1, le=50),
+    radius_km: int = Query(30, ge=1, le=300),
+) -> List[Dict[str, Any]]:
+    """
+    Reco: winkers proches + similarité profil (KNN embeddings).
+    Retour: profils winker (à filtrer côté output selon ce que tu veux exposer).
+    """
+    winker = get_profil_winker_raw(user_id)
+
+    profile_text = build_winker_profile_text(winker)
+    if not profile_text:
+        raise HTTPException(status_code=400, detail="Profil trop vide pour recommander des winkers.")
+
+    qvec = get_embedding(profile_text)
+    if not qvec:
+        raise HTTPException(status_code=500, detail="Impossible de générer l'embedding du profil.")
+
+    user_geo = parse_geo(winker)
+    if not user_geo:
+        raise HTTPException(status_code=400, detail="Pas de localisation (lat/lon) sur le profil winker.")
+
+    # ------- Filtres métier minimum -------
+    must_filters: List[Dict[str, Any]] = [
+        {"term": {"is_active": True}},
+        {"term": {"is_banned": False}},
+        {"bool": {"must_not": [{"term": {"_id": str(user_id)}}]}},  # exclure soi-même
+        {"geo_distance": {"distance": f"{radius_km}km", "localisation": user_geo}},
+    ]
+
+    # Optionnel: filtrer par sexe / âge / préférences si tu as des règles
+    # ex: si le demandeur ne veut voir que "Feminin":
+    # if winker.get("sexeRecherche") in ("Feminin", "Masculin"):
+    #     must_filters.append({"term": {"sexe": winker["sexeRecherche"]}})
+
+    base_query: Dict[str, Any] = {"bool": {"filter": must_filters}}
+
+    knn_query: Dict[str, Any] = {
+        "field": "embedding_vector",
+        "query_vector": qvec,
+        "k": 200,                 # on récupère large
+        "num_candidates": 1000,   # selon taille index
+    }
+
+    body: Dict[str, Any] = {
+        "size": limit,
+        "query": base_query,
+        "knn": knn_query,
+        # Re-score optionnel (popularité, complétude profil, activité récente, etc.)
+        "rescore": {
+            "window_size": 200,
+            "query": {
+                "rescore_query": {
+                    "function_score": {
+                        "query": {"match_all": {}},
+                        "functions": [
+                            {"field_value_factor": {"field": "boost", "factor": 0.05, "missing": 0}},
+                            # Exemple: booster l’activité récente si tu as last_active_ts
+                            # {"gauss": {"last_active_ts": {"origin": "now", "scale": "14d", "decay": 0.5}}}
+                        ],
+                        "boost_mode": "sum",
+                        "score_mode": "sum",
+                    }
+                },
+                "query_weight": 1.0,
+                "rescore_query_weight": 1.0,
+            }
+        },
+        "_source": False,  # on veut juste les ids (puis SQL)
+    }
+
+    resp = es.search(index=WINKERS_INDEX, body=body)
+    hits = resp.get("hits", {}).get("hits", [])
+
+    winker_ids: List[int] = []
+    for h in hits:
+        try:
+            winker_ids.append(int(h.get("_id")))
+        except Exception:
+            continue
+
+    if not winker_ids:
+        return []
+
+    winkers_sql = fetch_winkers_by_ids(winker_ids)
+
+    # préserver ordre ES
+    by_id = {w["id"]: w for w in winkers_sql if "id" in w}
+    ordered = [by_id[i] for i in winker_ids if i in by_id]
+
+    # ⚠️ Sécurité: retire des champs sensibles avant de retourner
+    # Exemple: enlever email / téléphone / tokens / etc.
+    safe_out: List[Dict[str, Any]] = []
+    for w in ordered:
+        safe_out.append({
+            "id": w.get("id"),
+            "username": w.get("username"),
+            "bio": w.get("bio"),
+            "city": w.get("city"),
+            "region": w.get("region"),
+            "lat": w.get("lat"),
+            "lon": w.get("lon"),
+            "sexe": w.get("sexe"),
+            # ajoute ce que tu exposes réellement
+        })
+
+    return safe_out
+
+
