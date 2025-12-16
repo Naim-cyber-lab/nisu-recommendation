@@ -169,6 +169,23 @@ def get_events_for_winker(user_id: int) -> List[EventOut]:
     return [to_event_out(e) for e in ordered]
 
 
+from datetime import datetime, timezone
+from typing import Any, Dict, List
+from fastapi import Query, HTTPException
+
+def age_from_birth_year(birth_year: Any) -> int:
+    """
+    Calcule l'âge à partir de birthYear (année), avec garde-fous.
+    """
+    try:
+        by = int(birth_year)
+        now_year = datetime.now(timezone.utc).year
+        age = now_year - by
+        return max(0, min(age, 120))
+    except Exception:
+        return 0
+
+
 @router.get("/get_winkers_for_winker/{user_id}")
 def get_winkers_for_winker(
     user_id: int,
@@ -177,7 +194,10 @@ def get_winkers_for_winker(
 ) -> List[Dict[str, Any]]:
     """
     Reco: winkers proches + similarité profil (KNN embeddings).
-    Retour: profils winker (à filtrer côté output selon ce que tu veux exposer).
+    Puis re-ranking (rescore) avec:
+      - activité récente (gauss sur lastConnection)
+      - proximité géographique (gauss sur localisation)
+      - proximité d'âge (gauss sur age, origin = âge calculé depuis birthYear du demandeur)
     """
     winker = get_profil_winker_raw(user_id)
 
@@ -193,6 +213,9 @@ def get_winkers_for_winker(
     if not user_geo:
         raise HTTPException(status_code=400, detail="Pas de localisation (lat/lon) sur le profil winker.")
 
+    # âge du demandeur à partir de birthYear
+    user_age = age_from_birth_year(winker.get("birthYear"))
+
     # ------- Filtres métier minimum -------
     must_filters: List[Dict[str, Any]] = [
         {"term": {"is_active": True}},
@@ -200,11 +223,6 @@ def get_winkers_for_winker(
         {"bool": {"must_not": [{"term": {"_id": str(user_id)}}]}},  # exclure soi-même
         {"geo_distance": {"distance": f"{radius_km}km", "localisation": user_geo}},
     ]
-
-    # Optionnel: filtrer par sexe / âge / préférences si tu as des règles
-    # ex: si le demandeur ne veut voir que "Feminin":
-    # if winker.get("sexeRecherche") in ("Feminin", "Masculin"):
-    #     must_filters.append({"term": {"sexe": winker["sexeRecherche"]}})
 
     base_query: Dict[str, Any] = {"bool": {"filter": must_filters}}
 
@@ -215,22 +233,69 @@ def get_winkers_for_winker(
         "num_candidates": 1000,   # selon taille index
     }
 
+    # ------- Rescore: gauss activité + gauss geo + gauss âge (+ boost) -------
+    functions: List[Dict[str, Any]] = [
+        # 1) Récence de connexion: plus récent = mieux
+        {
+            "filter": {"exists": {"field": "lastConnection"}},
+            "gauss": {
+                "lastConnection": {
+                    "origin": "now",
+                    "scale": "3d",     # à tuner (2d / 7d / 14d)
+                    "offset": "0d",
+                    "decay": 0.4
+                }
+            },
+            "weight": 3.0
+        },
+
+        # 2) Proximité géographique: plus proche = mieux
+        {
+            "gauss": {
+                "localisation": {
+                    "origin": f"{user_geo['lat']},{user_geo['lon']}",
+                    "scale": "10km",   # à tuner (5km / 15km / 25km)
+                    "offset": "1km",
+                    "decay": 0.5
+                }
+            },
+            "weight": 2.0
+        },
+    ]
+
+    # 3) Proximité d'âge: compare au champ ES "age"
+    # (origin = âge calculé depuis winker.birthYear)
+    if user_age > 0:
+        functions.append({
+            "filter": {"exists": {"field": "age"}},
+            "gauss": {
+                "age": {
+                    "origin": user_age,
+                    "scale": 5,     # tolérance ~5 ans
+                    "offset": 1,    # 1 an sans pénalité
+                    "decay": 0.5
+                }
+            },
+            "weight": 1.5
+        })
+
+    # Bonus (comme avant)
+    functions.append({
+        "field_value_factor": {"field": "boost", "factor": 0.05, "missing": 0},
+        "weight": 1.0
+    })
+
     body: Dict[str, Any] = {
         "size": limit,
         "query": base_query,
         "knn": knn_query,
-        # Re-score optionnel (popularité, complétude profil, activité récente, etc.)
         "rescore": {
             "window_size": 200,
             "query": {
                 "rescore_query": {
                     "function_score": {
                         "query": {"match_all": {}},
-                        "functions": [
-                            {"field_value_factor": {"field": "boost", "factor": 0.05, "missing": 0}},
-                            # Exemple: booster l’activité récente si tu as last_active_ts
-                            # {"gauss": {"last_active_ts": {"origin": "now", "scale": "14d", "decay": 0.5}}}
-                        ],
+                        "functions": functions,
                         "boost_mode": "sum",
                         "score_mode": "sum",
                     }
@@ -261,8 +326,6 @@ def get_winkers_for_winker(
     by_id = {w["id"]: w for w in winkers_sql if "id" in w}
     ordered = [by_id[i] for i in winker_ids if i in by_id]
 
-    # ⚠️ Sécurité: retire des champs sensibles avant de retourner
-    # Exemple: enlever email / téléphone / tokens / etc.
     safe_out: List[Dict[str, Any]] = []
 
     user_lat = float(user_geo["lat"])
@@ -277,7 +340,7 @@ def get_winkers_for_winker(
             if lat is not None and lon is not None:
                 distance_km = round(
                     haversine_km(user_lat, user_lon, float(lat), float(lon)),
-                    1,  # 1 décimale → UX clean
+                    1,
                 )
         except Exception:
             pass
@@ -291,7 +354,7 @@ def get_winkers_for_winker(
             "sexe": w.get("sexe"),
             "photoProfil": w.get("photoProfil"),
             "distance_km": distance_km,
-            **w,
+            **w,  # ⚠️ pense à retirer ici les champs sensibles si w les contient
         })
 
     return safe_out
