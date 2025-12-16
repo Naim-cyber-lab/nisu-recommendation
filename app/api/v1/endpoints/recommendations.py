@@ -289,9 +289,9 @@ def get_winkers_for_winker(
             "city": w.get("city"),
             "region": w.get("region"),
             "sexe": w.get("sexe"),
-
-            # 🔥 NOUVEAU
+            "photoProfil": w.get("photoProfil"),
             "distance_km": distance_km,
+            **w,
         })
 
     return safe_out
