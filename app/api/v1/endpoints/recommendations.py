@@ -9,6 +9,7 @@ from app.schemas import *
 from app.api.v1.sql.fetch_events_with_relations_by_ids import *
 from app.embeddings.service import embed_text
 from app.api.v1.sql.fetch_winkers_by_ids import *
+from app.api.utils import *
 
 router = APIRouter()
 
