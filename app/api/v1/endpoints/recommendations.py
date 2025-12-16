@@ -344,8 +344,11 @@ def get_winkers_for_winker(
                 )
         except Exception:
             pass
+        following_ids, follow_back_ids = fetch_follow_flags(user_id, winker_ids)
+
 
         safe_out.append({
+            **w,
             "id": w.get("id"),
             "username": w.get("username"),
             "bio": w.get("bio"),
@@ -354,7 +357,8 @@ def get_winkers_for_winker(
             "sexe": w.get("sexe"),
             "photoProfil": w.get("photoProfil"),
             "distance_km": distance_km,
-            **w,  # ⚠️ pense à retirer ici les champs sensibles si w les contient
+            "isFollowing": int(w.get("id")) in following_ids,
+            "isFollowBack": int(w.get("id")) in follow_back_ids,
         })
 
     return safe_out
