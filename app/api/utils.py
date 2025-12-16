@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional
+import math
 
 def build_winker_profile_text(w: Dict[str, Any]) -> str:
     """
@@ -65,3 +66,21 @@ def parse_geo(w: Dict[str, Any]) -> Optional[Dict[str, float]]:
         return {"lat": float(lat), "lon": float(lon)}
     except Exception:
         return None
+
+def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """
+    Distance en kilomètres entre deux points GPS
+    """
+    R = 6371.0  # rayon Terre en km
+
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+
+    a = (
+        math.sin(dphi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    )
+
+    return R * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))

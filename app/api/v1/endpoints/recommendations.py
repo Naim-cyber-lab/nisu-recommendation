@@ -263,17 +263,34 @@ def get_winkers_for_winker(
     # ⚠️ Sécurité: retire des champs sensibles avant de retourner
     # Exemple: enlever email / téléphone / tokens / etc.
     safe_out: List[Dict[str, Any]] = []
+
+    user_lat = float(user_geo["lat"])
+    user_lon = float(user_geo["lon"])
+
     for w in ordered:
+        lat = w.get("lat")
+        lon = w.get("lon")
+
+        distance_km = None
+        try:
+            if lat is not None and lon is not None:
+                distance_km = round(
+                    haversine_km(user_lat, user_lon, float(lat), float(lon)),
+                    1,  # 1 décimale → UX clean
+                )
+        except Exception:
+            pass
+
         safe_out.append({
             "id": w.get("id"),
             "username": w.get("username"),
             "bio": w.get("bio"),
             "city": w.get("city"),
             "region": w.get("region"),
-            "lat": w.get("lat"),
-            "lon": w.get("lon"),
             "sexe": w.get("sexe"),
-            # ajoute ce que tu exposes réellement
+
+            # 🔥 NOUVEAU
+            "distance_km": distance_km,
         })
 
     return safe_out
