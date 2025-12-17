@@ -131,19 +131,44 @@ def get_events_for_winker(user_id: int) -> List[EventOut]:
                     "function_score": {
                         "query": {"match_all": {}},
                         "functions": [
-                            {"field_value_factor": {"field": "boost", "factor": 0.05, "missing": 0}}
+                            # ✅ 1) Boost proximité géographique
+                            *([
+                                {
+                                    "gauss": {
+                                        "localisation": {
+                                            "origin": user_geo,     # {"lat":..., "lon":...}
+                                            "scale": "25km",        # plus petit = plus agressif
+                                            "offset": "2km",        # zone "plein boost"
+                                            "decay": 0.5
+                                        }
+                                    },
+                                    "weight": 6.0              # ⬅️ augmente pour donner + d'importance à la geo
+                                }
+                            ] if user_geo else []),
+
+                            # ✅ 2) Ton boost existant
+                            {
+                                "field_value_factor": {
+                                    "field": "boost",
+                                    "factor": 0.05,
+                                    "missing": 0
+                                },
+                                "weight": 1.0
+                            }
                         ],
-                        "boost_mode": "sum",
-                        "score_mode": "sum"
+                        # IMPORTANT : "sum" additionne, "multiply" rend les boosts plus dominants
+                        "score_mode": "sum",
+                        "boost_mode": "sum"
                     }
                 },
-                "query_weight": 1.0,
-                "rescore_query_weight": 1.0
+                # ✅ Tu peux aussi “donner plus de poids” au rescore globalement
+                "query_weight": 0.7,
+                "rescore_query_weight": 1.6
             }
         },
-        "_source": False,  # on veut juste les ids
+        "_source": False,
     }
-
+    
     resp = es.search(index=ES_INDEX, body=body)
     hits = resp.get("hits", {}).get("hits", [])
 
