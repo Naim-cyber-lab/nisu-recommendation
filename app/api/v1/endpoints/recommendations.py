@@ -10,6 +10,8 @@ from app.api.v1.sql.fetch_events_with_relations_by_ids import *
 from app.embeddings.service import embed_text
 from app.api.v1.sql.fetch_winkers_by_ids import *
 from app.api.utils import *
+from datetime import datetime, timezone, date
+import hashlib
 
 router = APIRouter()
 
@@ -120,6 +122,10 @@ def get_events_for_winker(user_id: int) -> List[EventOut]:
             }
         }
 
+    # seed stable "par jour" et par user (même résultats dans la journée, change le lendemain)
+    seed_str = f"{user_id}-{date.today().isoformat()}"          # ex: "123-2025-12-17"
+    seed = int(hashlib.md5(seed_str.encode()).hexdigest()[:8], 16)  # int 32-bit
+
     body: Dict[str, Any] = {
         "size": 4,
         "query": base_query,
@@ -137,12 +143,12 @@ def get_events_for_winker(user_id: int) -> List[EventOut]:
                                     "gauss": {
                                         "localisation": {
                                             "origin": user_geo,     # {"lat":..., "lon":...}
-                                            "scale": "25km",        # plus petit = plus agressif
-                                            "offset": "2km",        # zone "plein boost"
+                                            "scale": "25km",
+                                            "offset": "2km",
                                             "decay": 0.5
                                         }
                                     },
-                                    "weight": 6.0              # ⬅️ augmente pour donner + d'importance à la geo
+                                    "weight": 6.0
                                 }
                             ] if user_geo else []),
 
@@ -154,21 +160,27 @@ def get_events_for_winker(user_id: int) -> List[EventOut]:
                                     "missing": 0
                                 },
                                 "weight": 1.0
+                            },
+
+                            # ✅ 3) Variation stable par jour (petit bruit aléatoire)
+                            {
+                                "random_score": {
+                                    "seed": seed,
+                                    "field": "_seq_no"   # ou "_id" si tu préfères
+                                },
+                                "weight": 0.15         # augmente si tu veux plus de variété
                             }
                         ],
-                        # IMPORTANT : "sum" additionne, "multiply" rend les boosts plus dominants
                         "score_mode": "sum",
                         "boost_mode": "sum"
                     }
                 },
-                # ✅ Tu peux aussi “donner plus de poids” au rescore globalement
                 "query_weight": 0.7,
                 "rescore_query_weight": 1.6
             }
         },
         "_source": False,
     }
-    
     resp = es.search(index=ES_INDEX, body=body)
     hits = resp.get("hits", {}).get("hits", [])
 
@@ -194,9 +206,7 @@ def get_events_for_winker(user_id: int) -> List[EventOut]:
     return [to_event_out(e) for e in ordered]
 
 
-from datetime import datetime, timezone
-from typing import Any, Dict, List
-from fastapi import Query, HTTPException
+
 
 def age_from_birth_year(birth_year: Any) -> int:
     """
