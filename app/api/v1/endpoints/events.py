@@ -197,6 +197,10 @@ def _build_query(
         }
     )
 
+    # ✅ IMPORTANT:
+    # - score_mode="sum": on additionne les contributions (vecteurs + geo + boost)
+    # - boost_mode="multiply": la base query (texte) est multipliée par les fonctions
+    #   => la distance devient une vraie pénalité (si loin => facteur proche de 0)
     body: Dict[str, Any] = {
         "track_total_hits": True,
         "from": from_,
@@ -207,7 +211,7 @@ def _build_query(
                 "query": base_query,
                 "functions": functions,
                 "score_mode": "sum",
-                "boost_mode": "sum",
+                "boost_mode": "multiply",  # ✅ au lieu de "sum"
             }
         },
     }
@@ -257,7 +261,6 @@ def search_events_paginated(
     total = res.get("hits", {}).get("total", {})
     total_count = int(total.get("value", 0)) if isinstance(total, dict) else int(total or 0)
 
-    # 1) event_ids ES + meta
     event_ids: List[int] = []
     meta_by_id: Dict[int, Dict[str, Any]] = {}
 
@@ -284,10 +287,8 @@ def search_events_paginated(
         event_ids.append(eid)
         meta_by_id[eid] = {"score": score, "distance_km": distance_km}
 
-    # 2) Hydratation DB
     events_db = fetch_events_with_relations_by_ids(event_ids)
 
-    # 3) index db by id
     db_by_id: Dict[int, dict] = {}
     for ev in events_db:
         raw_id = ev.get("id") or ev.get("event_id") or ev.get("eventId") or ev.get("_id")
@@ -296,7 +297,6 @@ def search_events_paginated(
         except Exception:
             continue
 
-    # 4) merge
     merged: List[dict] = []
     for eid in event_ids:
         ev = db_by_id.get(eid)
@@ -317,7 +317,7 @@ def search_events_paginated(
             }
         )
 
-    # ✅ TRI FINAL: score décroissant (plus pertinent -> moins pertinent)
+    # (Optionnel) tri sécurité côté API
     merged.sort(key=lambda e: float(e.get("score") or 0.0), reverse=True)
 
     has_more = (from_ + per_page) < total_count
