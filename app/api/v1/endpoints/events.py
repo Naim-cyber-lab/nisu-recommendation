@@ -1,10 +1,9 @@
 from fastapi import APIRouter, Query, HTTPException
-from typing import Optional, Any, Dict, List, Tuple
+from typing import Optional, Any, Dict, List
 from elasticsearch import ApiError
 
 from app.core.es import es_client
 from app.embeddings.service import embed_text
-
 from app.api.v1.sql.fetch_events_with_relations_by_ids import fetch_events_with_relations_by_ids
 
 router = APIRouter()
@@ -57,11 +56,10 @@ def _final_relevance(score: float, distance_km: Optional[float], soft_radius_km:
     if distance_km is None:
         return base
 
-    # si vraiment loin, on écrase la pertinence
     if distance_km > soft_radius_km * 2:
-        return "HORS_ZONE"  # très loin (ex: Lille)
+        return "HORS_ZONE"
     if distance_km > soft_radius_km:
-        return "FAIBLE"     # loin mais pas absurde
+        return "FAIBLE"
     return base
 
 
@@ -74,18 +72,20 @@ def _build_query(
     sigma_km: float,
     geo_weight: float,
     vec_weight: float,
-    soft_radius_km: float,
+    soft_radius_km: float,  # utilisé pour labels côté API (pas ES)
     hard_max_radius_km: Optional[float],
 ) -> Dict[str, Any]:
     q = (q or "").strip()
     is_query_empty = len(q) == 0
 
-    # base query: toujours des hits possibles
+    # ✅ IMPORTANT: on force un "match_all" dans must quand q n'est pas vide,
+    # pour garantir "toujours des résultats" même si aucun should ne matche.
     if is_query_empty:
         base_query: Dict[str, Any] = {"match_all": {}}
     else:
         base_query = {
             "bool": {
+                "must": [{"match_all": {}}],
                 "should": [
                     {"match": {"titre": {"query": q, "boost": 2}}},
                     {"match": {"bio": {"query": q}}},
@@ -99,8 +99,7 @@ def _build_query(
 
     has_geo = lat is not None and lon is not None
 
-    # ✅ IMPORTANT: on récupère event_id depuis _source, sinon tu ne peux pas hydrater proprement
-    # => adapte le nom du champ si tu as "id" au lieu de "event_id"
+    # ✅ IMPORTANT: event_id nécessaire pour hydrater la DB
     source_includes = ["event_id"]
 
     functions: List[Dict[str, Any]] = []
@@ -133,7 +132,7 @@ def _build_query(
         }
     )
 
-    # 2) geo gaussian
+    # 2) geo gaussian + distance_km en fields
     script_fields: Dict[str, Any] = {}
     if has_geo:
         geo_script = """
@@ -162,7 +161,6 @@ def _build_query(
             }
         )
 
-        # distance_km renvoyée par ES
         script_fields["distance_km"] = {
             "script": {
                 "source": """
@@ -173,11 +171,9 @@ def _build_query(
             }
         }
 
-        # ✅ Option HARD: si tu veux empêcher Lille, tu peux filtrer au-delà d'un rayon max
-        # (si hard_max_radius_km est None => pas de filtre)
+        # Option HARD (filtre dur)
         if hard_max_radius_km is not None:
-            # inject filter geo_distance dans base_query
-            # (on conserve "toujours des réponses" parce que hard_max_radius_km est optionnel)
+            # inject geo_distance filter dans le bool (si q non vide => base_query.bool existe)
             base_bool = base_query.get("bool") if isinstance(base_query, dict) else None
             if isinstance(base_bool, dict):
                 base_bool.setdefault("filter", [])
@@ -189,6 +185,21 @@ def _build_query(
                         }
                     }
                 )
+            else:
+                # cas q vide: base_query = match_all => on wrappe dans un bool + filter
+                base_query = {
+                    "bool": {
+                        "must": [{"match_all": {}}],
+                        "filter": [
+                            {
+                                "geo_distance": {
+                                    "distance": f"{float(hard_max_radius_km)}km",
+                                    "localisation": {"lat": float(lat), "lon": float(lon)},
+                                }
+                            }
+                        ],
+                    }
+                }
 
     # 3) boost field
     functions.append(
@@ -268,13 +279,11 @@ def search_events_paginated(
 
     for h in hits:
         src = h.get("_source") or {}
-
-        raw_event_id = src.get("event_id") or h.get("_id")  # ✅
+        raw_event_id = src.get("event_id") or h.get("_id")
         try:
             eid = int(raw_event_id)
         except Exception:
             continue
-
 
         score = float(h.get("_score") or 0.0)
 
@@ -289,28 +298,19 @@ def search_events_paginated(
                     distance_km = None
 
         event_ids.append(eid)
-        meta_by_id[eid] = {
-            "score": score,
-            "distance_km": distance_km,
-        }
+        meta_by_id[eid] = {"score": score, "distance_km": distance_km}
 
-    # 2) Hydratation DB (peut renvoyer moins si IDs inexistants)
+    # 2) Hydratation DB
     events_db = fetch_events_with_relations_by_ids(event_ids)
 
     # 3) index db by id
     db_by_id: Dict[int, dict] = {}
     for ev in events_db:
-        raw_id = (
-            ev.get("id")
-            or ev.get("event_id")
-            or ev.get("eventId")
-            or ev.get("_id")
-        )
+        raw_id = ev.get("id") or ev.get("event_id") or ev.get("eventId") or ev.get("_id")
         try:
             db_by_id[int(raw_id)] = ev
         except Exception:
             continue
-
 
     # 4) merge en respectant l'ordre ES
     merged: List[dict] = []
@@ -333,19 +333,17 @@ def search_events_paginated(
             }
         )
 
-    # ✅ IMPORTANT: si DB renvoie moins que per_page, on "remonte" la pagination côté client
-    # car total_count ES compte des docs ES, pas forcément ceux existants en DB.
-    # Pour l’UX, on calcule has_more avec ES, mais tu peux aussi le baser sur len(hits).
     has_more = (from_ + per_page) < total_count
 
+    # ✅ Debug conservé (tu peux retirer après validation)
     return {
-    "es_hits_count": len(hits),
-    "merged_count": len(merged),
-    "total_count": total_count,
-    "first_es_ids": event_ids[:10],
-    "events": merged
+        "es_hits_count": len(hits),
+        "merged_count": len(merged),
+        "total_count": total_count,
+        "has_more": has_more,
+        "first_es_ids": event_ids[:10],
+        "events": merged,
     }
-
 
 
 @router.get("/search")
@@ -358,8 +356,6 @@ def search(
     sigma_km: float = Query(5.0, ge=0.1, le=100.0, description="Sigma gaussien en km"),
     geo_weight: float = Query(1.0, ge=0.0, le=10.0),
     vec_weight: float = Query(1.0, ge=0.0, le=10.0),
-
-    # ✅ ce que tu veux vraiment pour éviter Lille en “pertinent”
     soft_radius_km: float = Query(30.0, ge=1.0, le=300.0, description="Au-delà => pertinence dégradée"),
     hard_max_radius_km: Optional[float] = Query(None, ge=1.0, le=1000.0, description="Optionnel: filtre dur"),
 ):
@@ -377,8 +373,6 @@ def search(
     )
 
 
-
-
 @router.get("/debug/es")
 def debug_es():
     info = es_client.info()
@@ -390,5 +384,3 @@ def debug_es():
         "es_version": (info.get("version") or {}).get("number"),
         "count": count.get("count"),
     }
-
-
