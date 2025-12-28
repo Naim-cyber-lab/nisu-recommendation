@@ -5,6 +5,7 @@ from app.repositories.events import create_event, get_event
 
 from app.core.es import *
 from app.embeddings.service import embed_text
+
 router = APIRouter()
 
 
