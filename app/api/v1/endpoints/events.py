@@ -375,3 +375,20 @@ def search(
         soft_radius_km=soft_radius_km,
         hard_max_radius_km=hard_max_radius_km,
     )
+
+
+
+
+@router.get("/debug/es")
+def debug_es():
+    info = es_client.info()
+    count = es_client.count(index=INDEX)
+    return {
+        "INDEX": INDEX,
+        "cluster_name": info.get("cluster_name"),
+        "cluster_uuid": info.get("cluster_uuid"),
+        "es_version": (info.get("version") or {}).get("number"),
+        "count": count.get("count"),
+    }
+
+
