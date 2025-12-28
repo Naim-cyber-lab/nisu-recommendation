@@ -142,7 +142,7 @@ class EventIn(BaseModel):
     accessFollow: Optional[bool] = None
     accessFollower: Optional[bool] = None
 
-    event_id: Optional[int] = None
+    event_id: Optional[int | str] = None
 
     bioEvent: Optional[str] = None
     bioEvent_fr: Optional[str] = None

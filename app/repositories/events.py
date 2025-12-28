@@ -6,6 +6,7 @@ from typing import List
 
 def index_event(e: EventIn) -> None:
     doc = {
+        "event_id": str(e.id),
         "titre": e.titre,
         "bioEvent": e.bioEvent,
         "city": e.city,
@@ -34,7 +35,7 @@ def index_event(e: EventIn) -> None:
     if e.vectorPreferenceEvent is not None:
         doc["vectorPreferenceEvent"] = e.vectorPreferenceEvent
 
-    es_client.index(index=INDEX_EVENTS, id=e.get("id"), document=doc)
+    es_client.index(index=INDEX_EVENTS, id=str(e.id), document=doc)
 
 
 def bulk_index_events(events: List[EventIn]) -> None:
@@ -45,11 +46,8 @@ def bulk_index_events(events: List[EventIn]) -> None:
 
     actions = []
     for e in events:
-        doc = {
-            "_op_type": "index",
-            "_index": INDEX_EVENTS,
-            "event_id": e.id,
-            "_id": e.id,
+        source = {
+            "event_id": str(e.id),
             "titre": e.titre,
             "bioEvent": e.bioEvent,
             "city": e.city,
@@ -73,11 +71,16 @@ def bulk_index_events(events: List[EventIn]) -> None:
         }
 
         if e.lat is not None and e.lon is not None:
-            doc["latlon"] = {"lat": e.lat, "lon": e.lon}
+            source["latlon"] = {"lat": e.lat, "lon": e.lon}
 
         if e.vectorPreferenceEvent is not None:
-            doc["vectorPreferenceEvent"] = e.vectorPreferenceEvent
+            source["vectorPreferenceEvent"] = e.vectorPreferenceEvent
 
-        actions.append(doc)
+        actions.append({
+            "_op_type": "index",
+            "_index": INDEX_EVENTS,
+            "_id": str(e.id),
+            "_source": source,
+        })
 
     bulk(es_client, actions)
