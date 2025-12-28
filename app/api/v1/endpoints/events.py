@@ -24,7 +24,6 @@ def _to_float_list(vec) -> List[float]:
 
 
 def _relevance_label(score: float) -> str:
-    # ⚠️ seuils à ajuster après observation
     if score >= 2.5:
         return "TRÈS_PERTINENT"
     if score >= 1.2:
@@ -35,23 +34,12 @@ def _relevance_label(score: float) -> str:
 
 
 def _distance_penalty_label(distance_km: Optional[float], soft_radius_km: float) -> Optional[str]:
-    """
-    YouTube-like: tu veux toujours des résultats, mais on tague quand c'est loin.
-    - si pas de distance => None (pas de label)
-    - si distance <= soft_radius => None (ok)
-    - si distance > soft_radius => "LOIN"
-    """
     if distance_km is None:
         return None
     return "LOIN" if distance_km > soft_radius_km else None
 
 
 def _final_relevance(score: float, distance_km: Optional[float], soft_radius_km: float) -> str:
-    """
-    Combine score + distance :
-    - score donne un label de base
-    - si trop loin => on force FAIBLE (ou HORS_ZONE)
-    """
     base = _relevance_label(score)
     if distance_km is None:
         return base
@@ -78,8 +66,7 @@ def _build_query(
     q = (q or "").strip()
     is_query_empty = len(q) == 0
 
-    # ✅ IMPORTANT: on force un "match_all" dans must quand q n'est pas vide,
-    # pour garantir "toujours des résultats" même si aucun should ne matche.
+    # Match-all garanti (même si aucun should ne matche)
     if is_query_empty:
         base_query: Dict[str, Any] = {"match_all": {}}
     else:
@@ -99,7 +86,6 @@ def _build_query(
 
     has_geo = lat is not None and lon is not None
 
-    # ✅ IMPORTANT: event_id nécessaire pour hydrater la DB
     source_includes = ["event_id"]
 
     functions: List[Dict[str, Any]] = []
@@ -173,7 +159,6 @@ def _build_query(
 
         # Option HARD (filtre dur)
         if hard_max_radius_km is not None:
-            # inject geo_distance filter dans le bool (si q non vide => base_query.bool existe)
             base_bool = base_query.get("bool") if isinstance(base_query, dict) else None
             if isinstance(base_bool, dict):
                 base_bool.setdefault("filter", [])
@@ -186,7 +171,6 @@ def _build_query(
                     }
                 )
             else:
-                # cas q vide: base_query = match_all => on wrappe dans un bool + filter
                 base_query = {
                     "bool": {
                         "must": [{"match_all": {}}],
@@ -312,7 +296,7 @@ def search_events_paginated(
         except Exception:
             continue
 
-    # 4) merge en respectant l'ordre ES
+    # 4) merge
     merged: List[dict] = []
     for eid in event_ids:
         ev = db_by_id.get(eid)
@@ -333,15 +317,17 @@ def search_events_paginated(
             }
         )
 
+    # ✅ TRI FINAL: score décroissant (plus pertinent -> moins pertinent)
+    merged.sort(key=lambda e: float(e.get("score") or 0.0), reverse=True)
+
     has_more = (from_ + per_page) < total_count
 
-    # ✅ Debug conservé (tu peux retirer après validation)
     return {
         "es_hits_count": len(hits),
         "merged_count": len(merged),
         "total_count": total_count,
         "has_more": has_more,
-        "first_es_ids": event_ids[:10],
+        "first_es_ids": [int(e["id"]) for e in merged[:10] if "id" in e],
         "events": merged,
     }
 
