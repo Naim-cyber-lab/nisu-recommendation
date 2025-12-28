@@ -339,12 +339,13 @@ def search_events_paginated(
     has_more = (from_ + per_page) < total_count
 
     return {
-        "events": merged,
-        "page": page,
-        "per_page": per_page,
-        "total_count": total_count,
-        "has_more": has_more,
+    "es_hits_count": len(hits),
+    "merged_count": len(merged),
+    "total_count": total_count,
+    "first_es_ids": event_ids[:10],
+    "events": merged
     }
+
 
 
 @router.get("/search")
