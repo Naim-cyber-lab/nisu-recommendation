@@ -300,11 +300,17 @@ def search_events_paginated(
     # 3) index db by id
     db_by_id: Dict[int, dict] = {}
     for ev in events_db:
-        raw_id = ev.get("_id") or ev.get("event_id") or ev.get("eventId")
+        raw_id = (
+            ev.get("id")
+            or ev.get("event_id")
+            or ev.get("eventId")
+            or ev.get("_id")
+        )
         try:
             db_by_id[int(raw_id)] = ev
         except Exception:
             continue
+
 
     # 4) merge en respectant l'ordre ES
     merged: List[dict] = []
