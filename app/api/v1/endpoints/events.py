@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query
 from typing import List
-from app.repositories.events import create_event, get_event
 
 from app.core.es import *
 from app.embeddings.service import embed_text
@@ -8,17 +7,6 @@ from app.embeddings.service import embed_text
 router = APIRouter()
 
 
-@router.post("/", response_model=any)
-def create_event_endpoint(event_in):
-    return create_event(event_in)
-
-
-@router.get("/{event_id}", response_model=any)
-def get_event_endpoint(event_id: str):
-    event = get_event(event_id)
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-    return event
 
 
 
