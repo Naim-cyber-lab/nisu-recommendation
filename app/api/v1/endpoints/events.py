@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 from typing import List
-from app.schemas import EventCreate, Event
+from app.schemas import  Event
 from app.repositories.events import create_event, get_event
 
 from app.core.es import *
@@ -10,7 +10,7 @@ router = APIRouter()
 
 
 @router.post("/", response_model=Event)
-def create_event_endpoint(event_in: EventCreate):
+def create_event_endpoint(event_in):
     return create_event(event_in)
 
 
