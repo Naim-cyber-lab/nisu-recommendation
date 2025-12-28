@@ -268,7 +268,7 @@ def search_events_paginated(
 
     for h in hits:
         src = h.get("_source") or {}
-        raw_event_id = src.get("event_id") or src.get("id")
+        raw_event_id = src.get("_id") or src.get("id")
         try:
             eid = int(raw_event_id)
         except Exception:
@@ -299,7 +299,7 @@ def search_events_paginated(
     # 3) index db by id
     db_by_id: Dict[int, dict] = {}
     for ev in events_db:
-        raw_id = ev.get("id") or ev.get("event_id") or ev.get("eventId")
+        raw_id = ev.get("_id") or ev.get("event_id") or ev.get("eventId")
         try:
             db_by_id[int(raw_id)] = ev
         except Exception:
