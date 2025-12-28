@@ -9,7 +9,7 @@ router = APIRouter()
 
 
 
-INDEX = "events"
+INDEX = "nisu_events"
 
 def search_events(q: str, size: int = 20):
     vector = embed_text(q)
