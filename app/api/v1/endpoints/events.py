@@ -9,8 +9,6 @@ router = APIRouter()
 
 
 
-
-
 INDEX = "events"
 
 def search_events(q: str, size: int = 20):
@@ -42,7 +40,7 @@ def search_events(q: str, size: int = 20):
         },
     }
 
-    res = es.search(index=INDEX, body=query)
+    res = es_client.search(index=INDEX, body=query)
 
     return [
         {
