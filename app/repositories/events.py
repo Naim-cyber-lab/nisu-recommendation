@@ -48,6 +48,7 @@ def bulk_index_events(events: List[EventIn]) -> None:
         doc = {
             "_op_type": "index",
             "_index": INDEX_EVENTS,
+            "event_id": e.id,
             "_id": e.id,
             "titre": e.titre,
             "bioEvent": e.bioEvent,
