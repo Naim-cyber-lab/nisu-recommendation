@@ -1,12 +1,11 @@
 from fastapi import APIRouter, Query, HTTPException
-from typing import Optional, Any, Dict, List
+from typing import Optional, Any, Dict, List, Tuple
 from elasticsearch import ApiError
 
 from app.core.es import es_client
 from app.embeddings.service import embed_text
 
-# ✅ ta fonction (importe-la où elle est définie)
-from app.api.v1.sql.fetch_events_with_relations_by_ids import *
+from app.api.v1.sql.fetch_events_with_relations_by_ids import fetch_events_with_relations_by_ids
 
 router = APIRouter()
 
@@ -15,10 +14,9 @@ VECTOR_DIMS = 768
 
 
 def _to_float_list(vec) -> List[float]:
-    """Convert embedding to JSON-safe list[float]."""
     if vec is None:
         return []
-    if hasattr(vec, "tolist"):  # numpy / torch
+    if hasattr(vec, "tolist"):
         vec = vec.tolist()
     try:
         return [float(x) for x in vec]
@@ -27,7 +25,7 @@ def _to_float_list(vec) -> List[float]:
 
 
 def _relevance_label(score: float) -> str:
-    # ⚠️ seuils à ajuster après quelques tests
+    # ⚠️ seuils à ajuster après observation
     if score >= 2.5:
         return "TRÈS_PERTINENT"
     if score >= 1.2:
@@ -37,11 +35,34 @@ def _relevance_label(score: float) -> str:
     return "FAIBLE"
 
 
-def _safe_int_id(es_id: Any) -> Optional[int]:
-    try:
-        return int(es_id)
-    except Exception:
+def _distance_penalty_label(distance_km: Optional[float], soft_radius_km: float) -> Optional[str]:
+    """
+    YouTube-like: tu veux toujours des résultats, mais on tague quand c'est loin.
+    - si pas de distance => None (pas de label)
+    - si distance <= soft_radius => None (ok)
+    - si distance > soft_radius => "LOIN"
+    """
+    if distance_km is None:
         return None
+    return "LOIN" if distance_km > soft_radius_km else None
+
+
+def _final_relevance(score: float, distance_km: Optional[float], soft_radius_km: float) -> str:
+    """
+    Combine score + distance :
+    - score donne un label de base
+    - si trop loin => on force FAIBLE (ou HORS_ZONE)
+    """
+    base = _relevance_label(score)
+    if distance_km is None:
+        return base
+
+    # si vraiment loin, on écrase la pertinence
+    if distance_km > soft_radius_km * 2:
+        return "HORS_ZONE"  # très loin (ex: Lille)
+    if distance_km > soft_radius_km:
+        return "FAIBLE"     # loin mais pas absurde
+    return base
 
 
 def _build_query(
@@ -53,11 +74,13 @@ def _build_query(
     sigma_km: float,
     geo_weight: float,
     vec_weight: float,
+    soft_radius_km: float,
+    hard_max_radius_km: Optional[float],
 ) -> Dict[str, Any]:
     q = (q or "").strip()
     is_query_empty = len(q) == 0
 
-    # Toujours des réponses: q vide => match_all
+    # base query: toujours des hits possibles
     if is_query_empty:
         base_query: Dict[str, Any] = {"match_all": {}}
     else:
@@ -67,19 +90,24 @@ def _build_query(
                     {"match": {"titre": {"query": q, "boost": 2}}},
                     {"match": {"bio": {"query": q}}},
                 ],
-                "minimum_should_match": 0,  # ✅ toujours des hits possibles
+                "minimum_should_match": 0,
             }
         }
 
     vector = _to_float_list(embed_text(q)) if not is_query_empty else []
     use_vectors = len(vector) == VECTOR_DIMS
 
+    has_geo = lat is not None and lon is not None
+
+    # ✅ IMPORTANT: on récupère event_id depuis _source, sinon tu ne peux pas hydrater proprement
+    # => adapte le nom du champ si tu as "id" au lieu de "event_id"
+    source_includes = ["event_id"]
+
     functions: List[Dict[str, Any]] = []
 
-    # 1) Score vecteur (guards)
+    # 1) vecteurs
     vec_script = """
       double s = 0.0;
-
       if (params.useVec == false) return 0.0;
 
       if (doc['titre_vector'].size() != 0) {
@@ -91,7 +119,6 @@ def _build_query(
       if (doc['preferences_vector'].size() != 0) {
         s += cosineSimilarity(params.q, 'preferences_vector');
       }
-
       return s;
     """
     functions.append(
@@ -106,16 +133,14 @@ def _build_query(
         }
     )
 
-    # 2) Score geo gaussien + script_fields distance_km
-    has_geo = lat is not None and lon is not None
+    # 2) geo gaussian
     script_fields: Dict[str, Any] = {}
-
     if has_geo:
         geo_script = """
           if (doc['localisation'].size() == 0) return 0.0;
 
           double d = doc['localisation'].arcDistance(params.lat, params.lon); // meters
-          double sigma = params.sigma_m; // meters
+          double sigma = params.sigma_m;
           if (sigma <= 0) return 0.0;
 
           double x = d / sigma;
@@ -137,7 +162,7 @@ def _build_query(
             }
         )
 
-        # distance (km) renvoyée par ES pour chaque hit
+        # distance_km renvoyée par ES
         script_fields["distance_km"] = {
             "script": {
                 "source": """
@@ -148,7 +173,24 @@ def _build_query(
             }
         }
 
-    # 3) champ boost (si présent)
+        # ✅ Option HARD: si tu veux empêcher Lille, tu peux filtrer au-delà d'un rayon max
+        # (si hard_max_radius_km est None => pas de filtre)
+        if hard_max_radius_km is not None:
+            # inject filter geo_distance dans base_query
+            # (on conserve "toujours des réponses" parce que hard_max_radius_km est optionnel)
+            base_bool = base_query.get("bool") if isinstance(base_query, dict) else None
+            if isinstance(base_bool, dict):
+                base_bool.setdefault("filter", [])
+                base_bool["filter"].append(
+                    {
+                        "geo_distance": {
+                            "distance": f"{float(hard_max_radius_km)}km",
+                            "localisation": {"lat": float(lat), "lon": float(lon)},
+                        }
+                    }
+                )
+
+    # 3) boost field
     functions.append(
         {
             "field_value_factor": {
@@ -164,7 +206,7 @@ def _build_query(
         "track_total_hits": True,
         "from": from_,
         "size": size,
-        "_source": False,  # ✅ on hydrate via DB derrière
+        "_source": {"includes": source_includes},
         "query": {
             "function_score": {
                 "query": base_query,
@@ -190,8 +232,9 @@ def search_events_paginated(
     sigma_km: float,
     geo_weight: float,
     vec_weight: float,
+    soft_radius_km: float,
+    hard_max_radius_km: Optional[float],
 ) -> Dict[str, Any]:
-    # pagination
     page = max(1, page)
     per_page = max(1, min(per_page, 100))
     from_ = (page - 1) * per_page
@@ -205,6 +248,8 @@ def search_events_paginated(
         sigma_km=sigma_km,
         geo_weight=geo_weight,
         vec_weight=vec_weight,
+        soft_radius_km=soft_radius_km,
+        hard_max_radius_km=hard_max_radius_km,
     )
 
     try:
@@ -217,13 +262,17 @@ def search_events_paginated(
     total = res.get("hits", {}).get("total", {})
     total_count = int(total.get("value", 0)) if isinstance(total, dict) else int(total or 0)
 
-    # 1) Meta par id, et ordre ES
-    es_ids: List[int] = []
+    # 1) event_ids ES + meta
+    event_ids: List[int] = []
     meta_by_id: Dict[int, Dict[str, Any]] = {}
 
     for h in hits:
-        eid = _safe_int_id(h.get("_id"))
-        if eid is None:
+        src = h.get("_source") or {}
+        raw_event_id = src.get("event_id") or src.get("id")
+        try:
+            eid = int(raw_event_id)
+        except Exception:
+            # si tu n'as pas event_id dans ES, tu n'auras jamais 20 events hydratés
             continue
 
         score = float(h.get("_score") or 0.0)
@@ -238,17 +287,16 @@ def search_events_paginated(
                 except Exception:
                     distance_km = None
 
-        es_ids.append(eid)
+        event_ids.append(eid)
         meta_by_id[eid] = {
             "score": score,
-            "relevance": _relevance_label(score),
             "distance_km": distance_km,
         }
 
-    # 2) Hydratation DB
-    events_db = fetch_events_with_relations_by_ids(es_ids)
+    # 2) Hydratation DB (peut renvoyer moins si IDs inexistants)
+    events_db = fetch_events_with_relations_by_ids(event_ids)
 
-    # 3) Index DB par id (adapte si ton champ DB est différent)
+    # 3) index db by id
     db_by_id: Dict[int, dict] = {}
     for ev in events_db:
         raw_id = ev.get("id") or ev.get("event_id") or ev.get("eventId")
@@ -257,22 +305,30 @@ def search_events_paginated(
         except Exception:
             continue
 
-    # 4) Merge en respectant l’ordre ES + ajout meta
+    # 4) merge en respectant l'ordre ES
     merged: List[dict] = []
-    for eid in es_ids:
+    for eid in event_ids:
         ev = db_by_id.get(eid)
         if not ev:
             continue
+
         meta = meta_by_id.get(eid, {})
+        score = float(meta.get("score", 0.0))
+        distance_km = meta.get("distance_km", None)
+
         merged.append(
             {
                 **ev,
-                "score": meta.get("score", 0.0),
-                "relevance": meta.get("relevance", "FAIBLE"),
-                "distance_km": meta.get("distance_km", None),
+                "score": score,
+                "distance_km": distance_km,
+                "relevance": _final_relevance(score, distance_km, soft_radius_km),
+                "distance_label": _distance_penalty_label(distance_km, soft_radius_km),
             }
         )
 
+    # ✅ IMPORTANT: si DB renvoie moins que per_page, on "remonte" la pagination côté client
+    # car total_count ES compte des docs ES, pas forcément ceux existants en DB.
+    # Pour l’UX, on calcule has_more avec ES, mais tu peux aussi le baser sur len(hits).
     has_more = (from_ + per_page) < total_count
 
     return {
@@ -294,6 +350,10 @@ def search(
     sigma_km: float = Query(5.0, ge=0.1, le=100.0, description="Sigma gaussien en km"),
     geo_weight: float = Query(1.0, ge=0.0, le=10.0),
     vec_weight: float = Query(1.0, ge=0.0, le=10.0),
+
+    # ✅ ce que tu veux vraiment pour éviter Lille en “pertinent”
+    soft_radius_km: float = Query(30.0, ge=1.0, le=300.0, description="Au-delà => pertinence dégradée"),
+    hard_max_radius_km: Optional[float] = Query(None, ge=1.0, le=1000.0, description="Optionnel: filtre dur"),
 ):
     return search_events_paginated(
         q=q,
@@ -304,4 +364,6 @@ def search(
         sigma_km=sigma_km,
         geo_weight=geo_weight,
         vec_weight=vec_weight,
+        soft_radius_km=soft_radius_km,
+        hard_max_radius_km=hard_max_radius_km,
     )
