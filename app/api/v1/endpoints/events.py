@@ -268,12 +268,13 @@ def search_events_paginated(
 
     for h in hits:
         src = h.get("_source") or {}
-        raw_event_id = src.get("_id") or src.get("id")
+
+        raw_event_id = src.get("event_id") or h.get("_id")  # ✅
         try:
             eid = int(raw_event_id)
         except Exception:
-            # si tu n'as pas event_id dans ES, tu n'auras jamais 20 events hydratés
             continue
+
 
         score = float(h.get("_score") or 0.0)
 
