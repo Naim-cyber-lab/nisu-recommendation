@@ -60,7 +60,7 @@ def _build_query(
     sigma_km: float,
     geo_weight: float,
     vec_weight: float,
-    soft_radius_km: float,  # utilisé pour labels côté API (pas ES)
+    soft_radius_km: float,  # ✅ seuil "près => on s'en fout"
     hard_max_radius_km: Optional[float],
 ) -> Dict[str, Any]:
     q = (q or "").strip()
@@ -118,18 +118,21 @@ def _build_query(
         }
     )
 
-    # 2) geo gaussian + distance_km en fields
+    # 2) GEO: plateau proche puis chute forte après soft_radius_km
     script_fields: Dict[str, Any] = {}
     if has_geo:
         geo_script = """
-          if (doc['localisation'].size() == 0) return 0.0;
+          // Renvoie un FACTEUR (0..1)
+          // - dans soft_km => 1.0 (pas de pénalité)
+          // - au-delà => exp(-((d-soft)/falloff)^2) (chute rapide)
+          if (doc['localisation'].size() == 0) return 1.0;
 
-          double d = doc['localisation'].arcDistance(params.lat, params.lon); // meters
-          double sigma = params.sigma_m;
-          if (sigma <= 0) return 0.0;
+          double dKm = doc['localisation'].arcDistance(params.lat, params.lon) / 1000.0;
 
-          double x = d / sigma;
-          return Math.exp(-0.5 * x * x);
+          if (dKm <= params.soft_km) return 1.0;
+
+          double x = (dKm - params.soft_km) / params.falloff_km;
+          return Math.exp(-1.0 * x * x);
         """
         functions.append(
             {
@@ -139,7 +142,8 @@ def _build_query(
                         "params": {
                             "lat": float(lat),
                             "lon": float(lon),
-                            "sigma_m": float(sigma_km) * 1000.0,
+                            "soft_km": float(soft_radius_km),     # plateau
+                            "falloff_km": float(max(sigma_km, 0.1)),  # vitesse de chute
                         },
                     }
                 },
@@ -198,9 +202,8 @@ def _build_query(
     )
 
     # ✅ IMPORTANT:
-    # - score_mode="sum": on additionne les contributions (vecteurs + geo + boost)
-    # - boost_mode="multiply": la base query (texte) est multipliée par les fonctions
-    #   => la distance devient une vraie pénalité (si loin => facteur proche de 0)
+    # boost_mode="multiply" => les functions deviennent des facteurs/pénalités.
+    # Notre geo_script renvoie un facteur (0..1) => très loin => score écrasé.
     body: Dict[str, Any] = {
         "track_total_hits": True,
         "from": from_,
@@ -211,7 +214,7 @@ def _build_query(
                 "query": base_query,
                 "functions": functions,
                 "score_mode": "sum",
-                "boost_mode": "multiply",  # ✅ au lieu de "sum"
+                "boost_mode": "multiply",
             }
         },
     }
@@ -317,7 +320,7 @@ def search_events_paginated(
             }
         )
 
-    # (Optionnel) tri sécurité côté API
+    # Tri sécurité côté API
     merged.sort(key=lambda e: float(e.get("score") or 0.0), reverse=True)
 
     has_more = (from_ + per_page) < total_count
@@ -339,10 +342,16 @@ def search(
     per_page: int = Query(20, ge=1, le=100),
     lat: Optional[float] = Query(None),
     lon: Optional[float] = Query(None),
-    sigma_km: float = Query(5.0, ge=0.1, le=100.0, description="Sigma gaussien en km"),
+    sigma_km: float = Query(
+        15.0, ge=0.1, le=100.0,
+        description="(NOUVEAU SENS) vitesse de chute après soft_radius_km (km)"
+    ),
     geo_weight: float = Query(1.0, ge=0.0, le=10.0),
     vec_weight: float = Query(1.0, ge=0.0, le=10.0),
-    soft_radius_km: float = Query(30.0, ge=1.0, le=300.0, description="Au-delà => pertinence dégradée"),
+    soft_radius_km: float = Query(
+        10.0, ge=1.0, le=300.0,
+        description="Jusqu'ici, la distance pénalise quasi pas. Après => chute."
+    ),
     hard_max_radius_km: Optional[float] = Query(None, ge=1.0, le=1000.0, description="Optionnel: filtre dur"),
 ):
     return search_events_paginated(
