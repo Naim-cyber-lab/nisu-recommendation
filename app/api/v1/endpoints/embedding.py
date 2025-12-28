@@ -7,7 +7,6 @@ from app.embeddings.service import embed_text
 
 # 👉 tu l'as déjà
 from app.core.db import get_conn  # adapte si besoin
-from app.repositories.events import FETCH_EVENTS_SQL  # adapte si besoin
 from app.api.v1.sql.fetch_events_with_relations_by_ids import *
 
 router = APIRouter()
