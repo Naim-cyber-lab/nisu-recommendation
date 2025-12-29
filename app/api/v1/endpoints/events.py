@@ -23,6 +23,7 @@ def _to_float_list(vec) -> List[float]:
         return []
 
 
+# ✅ Relevance UNIQUEMENT basée sur le score final ES (qui inclut déjà la géoloc via function_score)
 def _relevance_label(score: float) -> str:
     if score >= 2.5:
         return "TRÈS_PERTINENT"
@@ -34,21 +35,13 @@ def _relevance_label(score: float) -> str:
 
 
 def _distance_penalty_label(distance_km: Optional[float], soft_radius_km: float) -> Optional[str]:
+    """
+    Label optionnel d'UX (ex: afficher "LOIN" dans l'UI).
+    ⚠️ Ne change PAS la relevance.
+    """
     if distance_km is None:
         return None
     return "LOIN" if distance_km > soft_radius_km else None
-
-
-def _final_relevance(score: float, distance_km: Optional[float], soft_radius_km: float) -> str:
-    base = _relevance_label(score)
-    if distance_km is None:
-        return base
-
-    if distance_km > soft_radius_km * 2:
-        return "HORS_ZONE"
-    if distance_km > soft_radius_km:
-        return "FAIBLE"
-    return base
 
 
 def _build_query(
@@ -60,7 +53,7 @@ def _build_query(
     sigma_km: float,
     geo_weight: float,
     vec_weight: float,
-    soft_radius_km: float,  # ✅ seuil "près => on s'en fout"
+    soft_radius_km: float,  # plateau géo : jusqu'ici pas de pénalité
     hard_max_radius_km: Optional[float],
 ) -> Dict[str, Any]:
     q = (q or "").strip()
@@ -90,7 +83,7 @@ def _build_query(
 
     functions: List[Dict[str, Any]] = []
 
-    # 1) vecteurs
+    # 1) VECTEURS
     vec_script = """
       double s = 0.0;
       if (params.useVec == false) return 0.0;
@@ -118,13 +111,13 @@ def _build_query(
         }
     )
 
-    # 2) GEO: plateau proche puis chute forte après soft_radius_km
+    # 2) GEO: plateau proche puis chute après soft_radius_km
     script_fields: Dict[str, Any] = {}
     if has_geo:
         geo_script = """
           // Renvoie un FACTEUR (0..1)
           // - dans soft_km => 1.0 (pas de pénalité)
-          // - au-delà => exp(-((d-soft)/falloff)^2) (chute rapide)
+          // - au-delà => exp(-((d-soft)/falloff)^2)
           if (doc['localisation'].size() == 0) return 1.0;
 
           double dKm = doc['localisation'].arcDistance(params.lat, params.lon) / 1000.0;
@@ -142,8 +135,8 @@ def _build_query(
                         "params": {
                             "lat": float(lat),
                             "lon": float(lon),
-                            "soft_km": float(soft_radius_km),     # plateau
-                            "falloff_km": float(max(sigma_km, 0.1)),  # vitesse de chute
+                            "soft_km": float(soft_radius_km),
+                            "falloff_km": float(max(sigma_km, 0.1)),
                         },
                     }
                 },
@@ -201,9 +194,8 @@ def _build_query(
         }
     )
 
-    # ✅ IMPORTANT:
-    # boost_mode="multiply" => les functions deviennent des facteurs/pénalités.
-    # Notre geo_script renvoie un facteur (0..1) => très loin => score écrasé.
+    # score_mode="sum" : addition des composantes (vecteurs + geo-factor + boost-field)
+    # boost_mode="multiply" : applique le multiplicateur global (inclut bien la pénalité geo via facteur 0..1)
     body: Dict[str, Any] = {
         "track_total_hits": True,
         "from": from_,
@@ -315,7 +307,9 @@ def search_events_paginated(
                 **ev,
                 "score": score,
                 "distance_km": distance_km,
-                "relevance": _final_relevance(score, distance_km, soft_radius_km),
+                # ✅ uniquement le score final ES
+                "relevance": _relevance_label(score),
+                # UX optionnel
                 "distance_label": _distance_penalty_label(distance_km, soft_radius_km),
             }
         )
@@ -343,16 +337,22 @@ def search(
     lat: Optional[float] = Query(None),
     lon: Optional[float] = Query(None),
     sigma_km: float = Query(
-        15.0, ge=0.1, le=100.0,
-        description="(NOUVEAU SENS) vitesse de chute après soft_radius_km (km)"
+        15.0,
+        ge=0.1,
+        le=100.0,
+        description="Vitesse de chute après soft_radius_km (km). Plus grand => pénalité distance plus douce.",
     ),
     geo_weight: float = Query(1.0, ge=0.0, le=10.0),
     vec_weight: float = Query(1.0, ge=0.0, le=10.0),
     soft_radius_km: float = Query(
-        10.0, ge=1.0, le=300.0,
-        description="Jusqu'ici, la distance pénalise quasi pas. Après => chute."
+        10.0,
+        ge=1.0,
+        le=300.0,
+        description="Jusqu'ici, la distance ne pénalise pas. Après => chute (contrôlée par sigma_km).",
     ),
-    hard_max_radius_km: Optional[float] = Query(None, ge=1.0, le=1000.0, description="Optionnel: filtre dur"),
+    hard_max_radius_km: Optional[float] = Query(
+        None, ge=1.0, le=1000.0, description="Optionnel: filtre dur (exclut au-delà)."
+    ),
 ):
     return search_events_paginated(
         q=q,
