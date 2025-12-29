@@ -398,4 +398,17 @@ def get_winkers_for_winker(
 
     return safe_out
 
+class EmbeddingRequest(BaseModel):
+    text: str = Field(..., min_length=1, description="Texte à vectoriser")
+
+class EmbeddingResponse(BaseModel):
+    dims: int = Field(..., description="Nombre de dimensions du vecteur")
+    embedding: List[float] = Field(..., description="Vecteur d'embedding")
+    normalized: bool = Field(True, description="Indique si le vecteur est normalisé")
+
+
+@router.get("/embedding", response_model=EmbeddingResponse)
+def embedding_endpoint_get(text: str = Query(..., min_length=1)):
+    vec = get_embedding(text.strip())
+    return EmbeddingResponse(dims=len(vec), embedding=vec, normalized=True)
 
