@@ -1,5 +1,6 @@
 from typing import Any, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
+from datetime import date
 
 class WinkerOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -62,7 +63,7 @@ class EventOut(BaseModel):
 
     # champs Event (reprend la liste de ton serializer, tu peux compléter au fur et à mesure)
     titre: Optional[str] = None
-    datePublication: any = None
+    datePublication: Any = None
     adresse: Optional[str] = None
     city: Optional[str] = None
     region: Optional[str] = None

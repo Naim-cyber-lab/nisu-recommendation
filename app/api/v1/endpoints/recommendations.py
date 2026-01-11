@@ -208,7 +208,7 @@ def get_events_for_winker(user_id: int) -> List[EventOut]:
     # events = get_events_by_ids(event_ids)
     # return [EventOut.from_orm(e) for e in events]
 
-    events = fetch_events_with_relations_by_ids(event_ids)  # <- à remplacer par ta logique existante
+    events = fetch_events_with_relations_by_ids(event_ids)
     return [EventOut.model_validate(e) for e in events]  # pydantic v2, sinon from_orm
 
 
