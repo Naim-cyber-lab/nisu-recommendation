@@ -199,6 +199,9 @@ def get_events_for_winker(user_id: int) -> List[EventOut]:
 
     if not event_ids:
         return []
+    
+    if True:
+        event_ids = [590, 565, 535]
 
     # (Le reste de ton code: fetch DB / sérialisation EventOut à partir de event_ids)
     # Exemple (à adapter à ton projet) :
