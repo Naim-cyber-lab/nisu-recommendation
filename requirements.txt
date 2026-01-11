@@ -5,3 +5,7 @@ python-dotenv
 sentence-transformers
 sqlalchemy
 psycopg[binary]
+
+spacy
+dateparser
+geopy
