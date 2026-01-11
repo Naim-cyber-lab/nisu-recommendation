@@ -74,6 +74,8 @@ def _build_es_query(
                 "should": [
                     {"match": {"titre": {"query": q, "boost": 2}}},
                     {"match": {"bio": {"query": q}}},
+                    {"match": {"titre_fr": {"query": q, "boost": 2}}},
+                    {"match": {"bio_fr": {"query": q}}},
                 ],
                 "minimum_should_match": 0,
             }
@@ -290,26 +292,3 @@ def search_events_and_hydrate(
         "total_count": total_value,
         "has_more": has_more,
     }
-
-
-@router.get("/search")
-def search(
-    q: str = Query("", description="Texte de recherche (peut être vide)"),
-    page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
-    lat: Optional[float] = Query(None),
-    lon: Optional[float] = Query(None),
-    sigma_km: float = Query(5.0, ge=0.1, le=100.0, description="Sigma gaussien en km"),
-    geo_weight: float = Query(1.0, ge=0.0, le=10.0),
-    vec_weight: float = Query(1.0, ge=0.0, le=10.0),
-):
-    return search_events_and_hydrate(
-        q=q,
-        page=page,
-        per_page=per_page,
-        lat=lat,
-        lon=lon,
-        sigma_km=sigma_km,
-        geo_weight=geo_weight,
-        vec_weight=vec_weight,
-    )

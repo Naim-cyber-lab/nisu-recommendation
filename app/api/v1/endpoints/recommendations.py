@@ -109,21 +109,22 @@ def get_events_for_winker(user_id: int) -> List[EventOut]:
         "field": "embedding_vector",
         "query_vector": qvec,
         "k": 50,
-        "num_candidates": 200
+        "num_candidates": 200,
     }
 
-    base_query: Dict[str, Any] = {"match_all": {}}
+    # ✅ Filtre commun: event_id < 678
+    base_filters: List[Dict[str, Any]] = [{"range": {"event_id": {"lt": 656}}}]
+
+    # ✅ Filtre geo optionnel
     if user_geo:
-        base_query = {
-            "bool": {
-                "filter": [
-                    {"geo_distance": {"distance": "200km", "localisation": user_geo}}
-                ]
-            }
-        }
+        base_filters.append(
+            {"geo_distance": {"distance": "200km", "localisation": user_geo}}
+        )
+
+    base_query: Dict[str, Any] = {"bool": {"filter": base_filters}}
 
     # seed stable "par jour" et par user (même résultats dans la journée, change le lendemain)
-    seed_str = f"{user_id}-{date.today().isoformat()}"          # ex: "123-2025-12-17"
+    seed_str = f"{user_id}-{date.today().isoformat()}"  # ex: "123-2025-12-17"
     seed = int(hashlib.md5(seed_str.encode()).hexdigest()[:8], 16)  # int 32-bit
 
     body: Dict[str, Any] = {
@@ -138,54 +139,59 @@ def get_events_for_winker(user_id: int) -> List[EventOut]:
                         "query": {"match_all": {}},
                         "functions": [
                             # ✅ 1) Boost proximité géographique
-                            *([
-                                {
-                                    "gauss": {
-                                        "localisation": {
-                                            "origin": user_geo,     # {"lat":..., "lon":...}
-                                            "scale": "25km",
-                                            "offset": "2km",
-                                            "decay": 0.5
-                                        }
-                                    },
-                                    "weight": 6.0
-                                }
-                            ] if user_geo else []),
-
+                            *(
+                                [
+                                    {
+                                        "gauss": {
+                                            "localisation": {
+                                                "origin": user_geo,  # {"lat":..., "lon":...}
+                                                "scale": "25km",
+                                                "offset": "2km",
+                                                "decay": 0.5,
+                                            }
+                                        },
+                                        "weight": 6.0,
+                                    }
+                                ]
+                                if user_geo
+                                else []
+                            ),
                             # ✅ 2) Ton boost existant
                             {
                                 "field_value_factor": {
                                     "field": "boost",
                                     "factor": 0.05,
-                                    "missing": 0
+                                    "missing": 0,
                                 },
-                                "weight": 1.0
+                                "weight": 1.0,
                             },
-
                             # ✅ 3) Variation stable par jour (petit bruit aléatoire)
                             {
                                 "random_score": {
                                     "seed": seed,
-                                    "field": "_seq_no"   # ou "_id" si tu préfères
+                                    "field": "_seq_no",  # ou "_id" si tu préfères
                                 },
-                                "weight": 0.15         # augmente si tu veux plus de variété
-                            }
+                                "weight": 0.15,
+                            },
                         ],
                         "score_mode": "sum",
-                        "boost_mode": "sum"
+                        "boost_mode": "sum",
                     }
                 },
                 "query_weight": 0.7,
-                "rescore_query_weight": 1.6
-            }
+                "rescore_query_weight": 1.6,
+            },
         },
         "_source": False,
     }
+
     resp = es.search(index=ES_INDEX, body=body)
     hits = resp.get("hits", {}).get("hits", [])
 
     event_ids: List[int] = []
     for h in hits:
+        # Si ton ES _id est ton event_id numérique, ça marche.
+        # Sinon, adapte pour lire h["_source"]["event_id"] (et mets _source=True ou includes)
         try:
             event_ids.append(int(h.get("_id")))
         except Exception:
@@ -194,18 +200,13 @@ def get_events_for_winker(user_id: int) -> List[EventOut]:
     if not event_ids:
         return []
 
-    # ====== ICI: tu remplaces par TON accès DB (SQLAlchemy / raw SQL / repo) ======
-    # Objectif: récupérer Event + creatorWinker + participants + participants.participeWinker
-    events_orm = fetch_events_with_relations_by_ids(event_ids)
-    # ============================================================================
+    # (Le reste de ton code: fetch DB / sérialisation EventOut à partir de event_ids)
+    # Exemple (à adapter à ton projet) :
+    # events = get_events_by_ids(event_ids)
+    # return [EventOut.from_orm(e) for e in events]
 
-    # préserver l'ordre ES
-    by_id = {e.get("id"): e for e in events_orm}
-    ordered = [by_id[eid] for eid in event_ids if eid in by_id]
-
-    return [to_event_out(e) for e in ordered]
-
-
+    events = get_events_by_ids(event_ids)  # <- à remplacer par ta logique existante
+    return [EventOut.model_validate(e) for e in events]  # pydantic v2, sinon from_orm
 
 
 def age_from_birth_year(birth_year: Any) -> int:
