@@ -9,7 +9,10 @@ COPY requirements.txt .
 RUN pip install --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-# 3) Copier le code
+# 3) Télécharger le modèle spaCy (à BUILD time)
+RUN python -m spacy download fr_core_news_md
+
+# 4) Copier le code
 COPY . .
 
 # 4) Commande par défaut (tu peux l’override dans docker-compose)

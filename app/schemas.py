@@ -62,7 +62,7 @@ class EventOut(BaseModel):
 
     # champs Event (reprend la liste de ton serializer, tu peux compléter au fur et à mesure)
     titre: Optional[str] = None
-    datePublication: date | None = None
+    datePublication: any = None
     adresse: Optional[str] = None
     city: Optional[str] = None
     region: Optional[str] = None
