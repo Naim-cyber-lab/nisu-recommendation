@@ -23,7 +23,6 @@ def _to_float_list(vec) -> List[float]:
         return []
 
 
-# ✅ Relevance UNIQUEMENT basée sur le score final ES (qui inclut déjà la géoloc via function_score)
 def _relevance_label(score: float) -> str:
     if score >= 2.5:
         return "TRÈS_PERTINENT"
