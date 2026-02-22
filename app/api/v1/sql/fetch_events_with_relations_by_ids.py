@@ -47,6 +47,7 @@ SELECT
     e."urlGoogleMapsAvis",
     e."urlAjoutGoogleMapsAvis",
     e."nb_conversations",
+    e."thumbnails",
     e."nbStories",
 
     to_jsonb(cw.*) AS "creatorWinker",
