@@ -275,7 +275,10 @@ def find_similar_events_paginated(
         meta_by_id[eid] = {"score": score, "distance_km": distance_km}
 
     # 4) Hydratation SQL
-    events_db = fetch_events_with_relations_by_ids(event_ids)
+    # Sur la page 1 : on inclut aussi l'event source pour le récupérer en position 0.
+    source_eid = int(event_id)
+    ids_to_fetch = ([source_eid] + event_ids) if page == 1 else event_ids
+    events_db = fetch_events_with_relations_by_ids(ids_to_fetch)
 
     db_by_id: Dict[int, dict] = {}
     for ev in events_db:
@@ -307,6 +310,24 @@ def find_similar_events_paginated(
         )
 
     merged.sort(key=lambda e: float(e.get("score") or 0.0), reverse=True)
+
+    # 6) Page 1 : injecter l'event source en position 0 (celui sur lequel l'user a cliqué).
+    #    On le retire des similaires s'il y était déjà (must_not l'exclut normalement, mais sécurité).
+    if page == 1:
+        source_ev = db_by_id.get(source_eid)
+        if source_ev:
+            # Supprimer une éventuelle occurrence dans merged (sécurité)
+            merged = [e for e in merged if int(e.get("id") or e.get("event_id") or 0) != source_eid]
+
+            source_entry = {
+                **source_ev,
+                "score": 1.0,           # score symbolique maximal
+                "distance_km": None,
+                "relevance": "TRÈS_PERTINENT",
+                "distance_label": None,
+                "is_source": True,      # flag UX optionnel côté frontend
+            }
+            merged = [source_entry] + merged
 
     has_more = (from_ + per_page) < total_count
 
