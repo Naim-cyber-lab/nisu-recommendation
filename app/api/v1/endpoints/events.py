@@ -378,31 +378,3 @@ def debug_es():
         "es_version": (info.get("version") or {}).get("number"),
         "count": count.get("count"),
     }
-
-
-
-@router.delete("/{event_id:int}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_event(event_id: int, conn: Connection = Depends(conn_dep)):
-    """
-    DELETE /events/{event_id}/
-    Supprime l'event et ses FilesEvent associés en cascade.
-    """
-    with conn.transaction():
-        with conn.cursor() as cur:
-            # Supprime les fichiers liés
-            cur.execute(
-                SQL("DELETE FROM {} WHERE event_id = %s").format(Identifier(FILESEVENT_TABLE)),
-                (event_id,)
-            )
-            # Supprime l'event
-            cur.execute(
-                SQL("DELETE FROM {} WHERE id = %s RETURNING id").format(Identifier(EVENT_TABLE)),
-                (event_id,)
-            )
-            row = cur.fetchone()
-            if row is None:
-                raise HTTPException(status_code=404, detail=f"Event {event_id} introuvable.")
-
-    logger.info("Event %s supprimé.", event_id)
-
-
