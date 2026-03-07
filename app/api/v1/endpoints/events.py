@@ -367,7 +367,75 @@ def search(
     )
 
 
-@router.get("/debug/es")
+@router.get("/quick-search")
+def quick_search(
+    q: str = Query("", description="Texte de recherche"),
+    lat: Optional[float] = Query(None),
+    lon: Optional[float] = Query(None),
+    min_score: float = Query(
+        0.5,
+        ge=0.0,
+        le=20.0,
+        description=(
+            "Score ES minimum pour qu'un résultat soit retourné. "
+            "Ajuste ce seuil pour contrôler la pertinence : "
+            "0.5 = permissif, 1.2 = pertinent, 2.5 = très pertinent."
+        ),
+    ),
+    sigma_km: float = Query(15.0, ge=0.1, le=100.0),
+    geo_weight: float = Query(1.0, ge=0.0, le=10.0),
+    vec_weight: float = Query(1.0, ge=0.0, le=10.0),
+    soft_radius_km: float = Query(10.0, ge=1.0, le=300.0),
+    hard_max_radius_km: Optional[float] = Query(None, ge=1.0, le=1000.0),
+):
+    """
+    Recherche rapide sans pagination — utilisée par le front mobile.
+    Récupère TOUS les événements pertinents selon le seuil min_score,
+    sans limite arbitraire, et les retourne triés par score décroissant.
+    """
+    # On récupère d'abord le total pour savoir combien il y a de résultats.
+    # Première passe légère : juste les IDs + scores pour connaître le vrai total.
+    probe = search_events_paginated(
+        q=q,
+        page=1,
+        per_page=1,
+        lat=lat,
+        lon=lon,
+        sigma_km=sigma_km,
+        geo_weight=geo_weight,
+        vec_weight=vec_weight,
+        soft_radius_km=soft_radius_km,
+        hard_max_radius_km=hard_max_radius_km,
+    )
+    total = probe["total_count"]
+
+    # Sécurité : on ne dépasse pas 500 pour ne pas saturer la DB / ES.
+    fetch_size = min(total, 500) if total > 0 else 40
+
+    result = search_events_paginated(
+        q=q,
+        page=1,
+        per_page=fetch_size,
+        lat=lat,
+        lon=lon,
+        sigma_km=sigma_km,
+        geo_weight=geo_weight,
+        vec_weight=vec_weight,
+        soft_radius_km=soft_radius_km,
+        hard_max_radius_km=hard_max_radius_km,
+    )
+
+    # Filtre côté Python par min_score (ES ne supporte min_score qu'avec certaines configs)
+    relevant_events = [e for e in result["events"] if float(e.get("score") or 0.0) >= min_score]
+
+    return {
+        "count": len(relevant_events),
+        "total_count": total,
+        "events": relevant_events,
+    }
+
+
+
 def debug_es():
     info = es_client.info()
     count = es_client.count(index=INDEX)
