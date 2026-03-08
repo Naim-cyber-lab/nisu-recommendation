@@ -45,32 +45,59 @@ def _distance_label(distance_km: Optional[float], soft_radius_km: float) -> Opti
 def _get_source_event(event_id: str) -> Dict[str, Any]:
     """
     Récupère le document source depuis ES.
-    Retourne son embedding_vector et sa localisation (peut être None).
+    Construit un vecteur combiné depuis titre_vector, bio_vector, preferences_vector
+    (moyenne pondérée : titre x2, bio x1, preferences x1).
     """
     try:
-        doc = es_client.get(index=INDEX, id=event_id, source_includes=["embedding_vector", "localisation"])
+        doc = es_client.get(
+            index=INDEX,
+            id=event_id,
+            source_includes=["titre_vector", "bio_vector", "preferences_vector", "localisation"],
+        )
     except NotFoundError:
         raise HTTPException(status_code=404, detail=f"Event '{event_id}' introuvable dans l'index ES.")
     except ApiError as e:
         raise HTTPException(status_code=400, detail={"elasticsearch_error": getattr(e, "info", str(e))})
 
     src = doc.get("_source") or {}
-    vector = _to_float_list(src.get("embedding_vector"))
-    localisation = src.get("localisation")  # {"lat": ..., "lon": ...} ou None
 
-    if len(vector) != VECTOR_DIMS:
+    titre_vec = _to_float_list(src.get("titre_vector"))
+    bio_vec = _to_float_list(src.get("bio_vector"))
+    pref_vec = _to_float_list(src.get("preferences_vector"))
+
+    # Moyenne pondérée des vecteurs disponibles (titre compte double)
+    weighted: List[List[float]] = []
+    weights: List[float] = []
+    if len(titre_vec) == VECTOR_DIMS:
+        weighted.append(titre_vec)
+        weights.append(2.0)
+    if len(bio_vec) == VECTOR_DIMS:
+        weighted.append(bio_vec)
+        weights.append(1.0)
+    if len(pref_vec) == VECTOR_DIMS:
+        weighted.append(pref_vec)
+        weights.append(1.0)
+
+    if not weighted:
         raise HTTPException(
             status_code=422,
-            detail=f"L'event '{event_id}' n'a pas d'embedding_vector valide (dims={len(vector)}).",
+            detail=f"L'event '{event_id}' n'a aucun vecteur valide (titre_vector, bio_vector, preferences_vector).",
         )
 
+    total_weight = sum(weights)
+    combined = [
+        sum(weighted[j][i] * weights[j] for j in range(len(weighted))) / total_weight
+        for i in range(VECTOR_DIMS)
+    ]
+
+    localisation = src.get("localisation")
     lat: Optional[float] = None
     lon: Optional[float] = None
     if isinstance(localisation, dict):
         lat = localisation.get("lat")
         lon = localisation.get("lon")
 
-    return {"vector": vector, "lat": lat, "lon": lon}
+    return {"vector": combined, "lat": lat, "lon": lon}
 
 
 # ─── build the "more like this vector + geo" query ───────────────────────────
@@ -113,13 +140,26 @@ def _build_similar_query(
 
     functions: List[Dict[str, Any]] = []
 
-    # ── 1) Score vecteur : cosine similarity sur embedding_vector ─────────────
-    # cosineSimilarity renvoie [-1, 1] ; on ramène à [0, 1] via (s+1)/2
-    # pour que le résultat puisse être correctement pondéré avec geo_factor.
+    # ── 1) Score vecteur : cosine similarity sur titre_vector + bio_vector ──────
+    # Moyenne des similarités disponibles (titre compte double).
+    # cosineSimilarity renvoie [-1, 1] ; on ramène à [0, 1] via (s+1)/2.
     vec_script = """
-      if (doc['embedding_vector'].size() == 0) return 0.0;
-      double raw = cosineSimilarity(params.vec, 'embedding_vector');
-      return (raw + 1.0) / 2.0;
+      double total = 0.0;
+      double weight = 0.0;
+      if (doc['titre_vector'].size() != 0) {
+        total += ((cosineSimilarity(params.vec, 'titre_vector') + 1.0) / 2.0) * 2.0;
+        weight += 2.0;
+      }
+      if (doc['bio_vector'].size() != 0) {
+        total += ((cosineSimilarity(params.vec, 'bio_vector') + 1.0) / 2.0) * 1.0;
+        weight += 1.0;
+      }
+      if (doc['preferences_vector'].size() != 0) {
+        total += ((cosineSimilarity(params.vec, 'preferences_vector') + 1.0) / 2.0) * 1.0;
+        weight += 1.0;
+      }
+      if (weight == 0.0) return 0.0;
+      return total / weight;
     """
     functions.append(
         {
