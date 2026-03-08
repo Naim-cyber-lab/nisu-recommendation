@@ -372,15 +372,6 @@ def quick_search(
     q: str = Query("", description="Texte de recherche"),
     vec_weight: float = Query(1.0, ge=0.0, le=10.0),
 ):
-    """
-    Recherche rapide sans pagination, sans géolocalisation.
-    Score basé uniquement sur la similarité vectorielle (boost_mode=replace).
-    Seuil calibré sur les scores réels cosine : max théorique ≈ 4.0 × vec_weight.
-    """
-    # Cosine similarity ∈ [-1, 1]
-    # Score max = (titre×2 + bio×1 + preferences×1) × vec_weight = 4 × vec_weight
-    # 0.35 de ce max = seuil "pertinent"
-    THRESHOLD = 0.5   # ← abaissé : 1.8 était trop haut pour des scores purement vectoriels
     MAX_FETCH = 500
 
     body = _build_query(
@@ -390,14 +381,14 @@ def quick_search(
         lat=None,
         lon=None,
         sigma_km=15.0,
-        geo_weight=0.0,
+        geo_weight=0.0,  # pas de géo
         vec_weight=vec_weight,
         soft_radius_km=10.0,
         hard_max_radius_km=None,
     )
 
-    body["query"]["function_score"]["boost_mode"] = "replace"
-    body["min_score"] = THRESHOLD
+    # ✅ On garde boost_mode="multiply" comme /search (scores cohérents)
+    # Pas de min_score ES — on filtre côté Python après
 
     try:
         res = es_client.search(index=INDEX, body=body)
@@ -419,7 +410,6 @@ def quick_search(
             eid = int(raw_event_id)
         except Exception:
             continue
-
         score = float(h.get("_score") or 0.0)
         event_ids.append(eid)
         meta_by_id[eid] = {"score": score}
@@ -440,6 +430,9 @@ def quick_search(
         if not ev:
             continue
         score = float(meta_by_id.get(eid, {}).get("score", 0.0))
+        # ✅ Filtre côté Python : uniquement TRÈS_PERTINENT (>= 2.5) et PERTINENT (>= 1.2)
+        if score < 1.2:
+            continue
         merged.append({
             **ev,
             "score": score,
@@ -453,7 +446,6 @@ def quick_search(
         "total_count": total_count,
         "events": merged,
     }
-
 
 @router.get("/quick-search/debug")
 def quick_search_debug(q: str = Query("poulet")):
