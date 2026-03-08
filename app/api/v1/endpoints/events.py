@@ -373,27 +373,29 @@ def quick_search(
     vec_weight: float = Query(1.0, ge=0.0, le=10.0),
 ):
     """
-    Recherche rapide sans pagination, sans géolocalisation — utilisée par le front mobile.
-    Retourne uniquement les événements pertinents (score >= 1.8),
-    triés par score décroissant, sans dépasser 500 résultats.
+    Recherche rapide sans pagination, sans géolocalisation.
+    Score basé uniquement sur la similarité vectorielle (boost_mode=replace).
+    Seuil calibré sur les scores réels cosine : max théorique ≈ 4.0 × vec_weight.
     """
-    THRESHOLD = 1.8
+    # Cosine similarity ∈ [-1, 1]
+    # Score max = (titre×2 + bio×1 + preferences×1) × vec_weight = 4 × vec_weight
+    # 0.35 de ce max = seuil "pertinent"
+    THRESHOLD = 0.5   # ← abaissé : 1.8 était trop haut pour des scores purement vectoriels
     MAX_FETCH = 500
 
     body = _build_query(
         q=q,
         from_=0,
         size=MAX_FETCH,
-        lat=None,       # ✅ pas de géo
-        lon=None,       # ✅ pas de géo
+        lat=None,
+        lon=None,
         sigma_km=15.0,
-        geo_weight=0.0, # ✅ poids géo à 0
+        geo_weight=0.0,
         vec_weight=vec_weight,
         soft_radius_km=10.0,
         hard_max_radius_km=None,
     )
 
-    # Score basé uniquement sur les fonctions (vecteurs + boost field), sans score query de base
     body["query"]["function_score"]["boost_mode"] = "replace"
     body["min_score"] = THRESHOLD
 
@@ -420,7 +422,7 @@ def quick_search(
 
         score = float(h.get("_score") or 0.0)
         event_ids.append(eid)
-        meta_by_id[eid] = {"score": score, "distance_km": None}
+        meta_by_id[eid] = {"score": score}
 
     events_db = fetch_events_with_relations_by_ids(event_ids)
 
@@ -437,9 +439,7 @@ def quick_search(
         ev = db_by_id.get(eid)
         if not ev:
             continue
-
         score = float(meta_by_id.get(eid, {}).get("score", 0.0))
-
         merged.append({
             **ev,
             "score": score,
@@ -453,6 +453,7 @@ def quick_search(
         "total_count": total_count,
         "events": merged,
     }
+
 
 def debug_es():
     info = es_client.info()
