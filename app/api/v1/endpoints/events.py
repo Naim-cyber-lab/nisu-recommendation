@@ -383,7 +383,7 @@ def quick_search(
     Retourne uniquement les événements TRÈS_PERTINENT (score >= 2.5),
     triés par score décroissant, sans dépasser 500 résultats.
     """
-    TRES_PERTINENT_THRESHOLD = 2.5
+    TRES_PERTINENT_THRESHOLD = 1.8
     MAX_FETCH = 500
 
     body = _build_query(
