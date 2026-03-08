@@ -371,6 +371,7 @@ def search(
 def quick_search(
     q: str = Query("", description="Texte de recherche"),
     vec_weight: float = Query(1.0, ge=0.0, le=10.0),
+    min_score: float = Query(0.5, ge=0.0, description="Score minimum (0 = tout retourner)"),
 ):
     MAX_FETCH = 500
 
@@ -378,16 +379,19 @@ def quick_search(
         q=q,
         from_=0,
         size=MAX_FETCH,
-        lat=48.8566,     # ✅ Paris center — juste pour activer le script ES
-        lon=2.3522,      # ✅ geo_weight=0 donc aucun impact sur le score
+        lat=None,
+        lon=None,
         sigma_km=15.0,
-        geo_weight=0.0,  # ✅ poids géo à 0 = pas d'effet sur le ranking
+        geo_weight=0.0,
         vec_weight=vec_weight,
         soft_radius_km=10.0,
         hard_max_radius_km=None,
     )
 
-    # Pas de min_score ni de boost_mode override — même mécanique que /search
+    # boost_mode="replace" : score final = somme des vecteurs uniquement,
+    # sans être multiplié par le BM25 (qui peut être ~0 et tout écraser)
+    body["query"]["function_score"]["boost_mode"] = "replace"
+
     try:
         res = es_client.search(index=INDEX, body=body)
     except ApiError as e:
@@ -428,7 +432,7 @@ def quick_search(
         if not ev:
             continue
         score = float(meta_by_id.get(eid, {}).get("score", 0.0))
-        if score < 1.2:  # filtre PERTINENT minimum
+        if score < min_score:
             continue
         merged.append({
             **ev,
@@ -443,6 +447,7 @@ def quick_search(
         "total_count": total_count,
         "events": merged,
     }
+
 @router.get("/quick-search/debug")
 def quick_search_debug(q: str = Query("poulet")):
     """Debug : vérifie embed_text et les scores bruts ES."""
