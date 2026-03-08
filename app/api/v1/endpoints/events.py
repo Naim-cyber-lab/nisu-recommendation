@@ -455,6 +455,40 @@ def quick_search(
     }
 
 
+@router.get("/quick-search/debug")
+def quick_search_debug(q: str = Query("poulet")):
+    """Debug : vérifie embed_text et les scores bruts ES."""
+
+    # 1. Tester embed_text
+    try:
+        vec = _to_float_list(embed_text(q))
+        vec_ok = len(vec) == VECTOR_DIMS
+        vec_info = {"len": len(vec), "ok": vec_ok, "sample": vec[:3] if vec else []}
+    except Exception as e:
+        vec_info = {"error": str(e), "ok": False}
+
+    # 2. Requête ES sans min_score pour voir les scores bruts
+    body = _build_query(
+        q=q, from_=0, size=5,
+        lat=None, lon=None, sigma_km=15.0,
+        geo_weight=0.0, vec_weight=1.0,
+        soft_radius_km=10.0, hard_max_radius_km=None,
+    )
+    body["query"]["function_score"]["boost_mode"] = "replace"
+    # ← PAS de min_score ici
+
+    try:
+        res = es_client.search(index=INDEX, body=body)
+        hits = res.get("hits", {}).get("hits", [])
+        scores = [{"id": h.get("_source", {}).get("event_id"), "score": h.get("_score")} for h in hits]
+    except Exception as e:
+        scores = {"error": str(e)}
+
+    return {
+        "embed_text": vec_info,
+        "top5_scores": scores,
+    }
+
 def debug_es():
     info = es_client.info()
     count = es_client.count(index=INDEX)
