@@ -378,18 +378,16 @@ def quick_search(
         q=q,
         from_=0,
         size=MAX_FETCH,
-        lat=None,
-        lon=None,
+        lat=48.8566,     # ✅ Paris center — juste pour activer le script ES
+        lon=2.3522,      # ✅ geo_weight=0 donc aucun impact sur le score
         sigma_km=15.0,
-        geo_weight=0.0,  # pas de géo
+        geo_weight=0.0,  # ✅ poids géo à 0 = pas d'effet sur le ranking
         vec_weight=vec_weight,
         soft_radius_km=10.0,
         hard_max_radius_km=None,
     )
 
-    # ✅ On garde boost_mode="multiply" comme /search (scores cohérents)
-    # Pas de min_score ES — on filtre côté Python après
-
+    # Pas de min_score ni de boost_mode override — même mécanique que /search
     try:
         res = es_client.search(index=INDEX, body=body)
     except ApiError as e:
@@ -430,8 +428,7 @@ def quick_search(
         if not ev:
             continue
         score = float(meta_by_id.get(eid, {}).get("score", 0.0))
-        # ✅ Filtre côté Python : uniquement TRÈS_PERTINENT (>= 2.5) et PERTINENT (>= 1.2)
-        if score < 1.2:
+        if score < 1.2:  # filtre PERTINENT minimum
             continue
         merged.append({
             **ev,
@@ -446,7 +443,6 @@ def quick_search(
         "total_count": total_count,
         "events": merged,
     }
-
 @router.get("/quick-search/debug")
 def quick_search_debug(q: str = Query("poulet")):
     """Debug : vérifie embed_text et les scores bruts ES."""
