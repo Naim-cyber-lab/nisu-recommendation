@@ -367,11 +367,44 @@ def search(
     )
 
 
+@router.get("/quick-search/debug")
+def quick_search_debug(q: str = Query("poulet")):
+    """Debug : vérifie embed_text et les scores bruts ES."""
+
+    # 1. Tester embed_text
+    try:
+        vec = _to_float_list(embed_text(q))
+        vec_ok = len(vec) == VECTOR_DIMS
+        vec_info = {"len": len(vec), "ok": vec_ok, "sample": vec[:3] if vec else []}
+    except Exception as e:
+        vec_info = {"error": str(e), "ok": False}
+
+    # 2. Requête ES sans min_score pour voir les scores bruts
+    body = _build_query(
+        q=q, from_=0, size=5,
+        lat=None, lon=None, sigma_km=15.0,
+        geo_weight=0.0, vec_weight=1.0,
+        soft_radius_km=10.0, hard_max_radius_km=None,
+    )
+    body["query"]["function_score"]["boost_mode"] = "replace"
+
+    try:
+        res = es_client.search(index=INDEX, body=body)
+        hits = res.get("hits", {}).get("hits", [])
+        scores = [{"id": h.get("_source", {}).get("event_id"), "score": h.get("_score")} for h in hits]
+    except Exception as e:
+        scores = {"error": str(e)}
+
+    return {
+        "embed_text": vec_info,
+        "top5_scores": scores,
+    }
+
+
 @router.get("/quick-search")
 def quick_search(
     q: str = Query("", description="Texte de recherche"),
     vec_weight: float = Query(1.0, ge=0.0, le=10.0),
-    min_score: float = Query(0.5, ge=0.0, description="Score minimum (0 = tout retourner)"),
 ):
     MAX_FETCH = 500
 
@@ -379,19 +412,16 @@ def quick_search(
         q=q,
         from_=0,
         size=MAX_FETCH,
-        lat=None,
-        lon=None,
+        lat=48.8566,     # ✅ Paris center — juste pour activer le script ES
+        lon=2.3522,      # ✅ geo_weight=0 donc aucun impact sur le score
         sigma_km=15.0,
-        geo_weight=0.0,
+        geo_weight=0.0,  # ✅ poids géo à 0 = pas d'effet sur le ranking
         vec_weight=vec_weight,
         soft_radius_km=10.0,
         hard_max_radius_km=None,
     )
 
-    # boost_mode="replace" : score final = somme des vecteurs uniquement,
-    # sans être multiplié par le BM25 (qui peut être ~0 et tout écraser)
-    body["query"]["function_score"]["boost_mode"] = "replace"
-
+    # Pas de min_score ni de boost_mode override — même mécanique que /search
     try:
         res = es_client.search(index=INDEX, body=body)
     except ApiError as e:
@@ -432,7 +462,7 @@ def quick_search(
         if not ev:
             continue
         score = float(meta_by_id.get(eid, {}).get("score", 0.0))
-        if score < min_score:
+        if score < 1.2:  # filtre PERTINENT minimum
             continue
         merged.append({
             **ev,
@@ -446,40 +476,6 @@ def quick_search(
         "count": len(merged),
         "total_count": total_count,
         "events": merged,
-    }
-
-@router.get("/quick-search/debug")
-def quick_search_debug(q: str = Query("poulet")):
-    """Debug : vérifie embed_text et les scores bruts ES."""
-
-    # 1. Tester embed_text
-    try:
-        vec = _to_float_list(embed_text(q))
-        vec_ok = len(vec) == VECTOR_DIMS
-        vec_info = {"len": len(vec), "ok": vec_ok, "sample": vec[:3] if vec else []}
-    except Exception as e:
-        vec_info = {"error": str(e), "ok": False}
-
-    # 2. Requête ES sans min_score pour voir les scores bruts
-    body = _build_query(
-        q=q, from_=0, size=5,
-        lat=None, lon=None, sigma_km=15.0,
-        geo_weight=0.0, vec_weight=1.0,
-        soft_radius_km=10.0, hard_max_radius_km=None,
-    )
-    body["query"]["function_score"]["boost_mode"] = "replace"
-    # ← PAS de min_score ici
-
-    try:
-        res = es_client.search(index=INDEX, body=body)
-        hits = res.get("hits", {}).get("hits", [])
-        scores = [{"id": h.get("_source", {}).get("event_id"), "score": h.get("_score")} for h in hits]
-    except Exception as e:
-        scores = {"error": str(e)}
-
-    return {
-        "embed_text": vec_info,
-        "top5_scores": scores,
     }
 
 def debug_es():
