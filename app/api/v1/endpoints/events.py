@@ -372,16 +372,6 @@ def quick_search(
     q: str = Query("", description="Texte de recherche"),
     lat: Optional[float] = Query(None),
     lon: Optional[float] = Query(None),
-    min_score: float = Query(
-        0.5,
-        ge=0.0,
-        le=20.0,
-        description=(
-            "Score ES minimum pour qu'un résultat soit retourné. "
-            "Ajuste ce seuil pour contrôler la pertinence : "
-            "0.5 = permissif, 1.2 = pertinent, 2.5 = très pertinent."
-        ),
-    ),
     sigma_km: float = Query(15.0, ge=0.1, le=100.0),
     geo_weight: float = Query(1.0, ge=0.0, le=10.0),
     vec_weight: float = Query(1.0, ge=0.0, le=10.0),
@@ -390,32 +380,16 @@ def quick_search(
 ):
     """
     Recherche rapide sans pagination — utilisée par le front mobile.
-    Récupère TOUS les événements pertinents selon le seuil min_score,
-    sans limite arbitraire, et les retourne triés par score décroissant.
+    Retourne uniquement les événements TRÈS_PERTINENT (score >= 2.5),
+    triés par score décroissant, sans dépasser 500 résultats.
     """
-    # On récupère d'abord le total pour savoir combien il y a de résultats.
-    # Première passe légère : juste les IDs + scores pour connaître le vrai total.
-    probe = search_events_paginated(
-        q=q,
-        page=1,
-        per_page=1,
-        lat=lat,
-        lon=lon,
-        sigma_km=sigma_km,
-        geo_weight=geo_weight,
-        vec_weight=vec_weight,
-        soft_radius_km=soft_radius_km,
-        hard_max_radius_km=hard_max_radius_km,
-    )
-    total = probe["total_count"]
+    TRES_PERTINENT_THRESHOLD = 2.5
+    MAX_FETCH = 500
 
-    # Sécurité : on ne dépasse pas 500 pour ne pas saturer la DB / ES.
-    fetch_size = min(total, 500) if total > 0 else 40
-
-    result = search_events_paginated(
+    body = _build_query(
         q=q,
-        page=1,
-        per_page=fetch_size,
+        from_=0,
+        size=MAX_FETCH,
         lat=lat,
         lon=lon,
         sigma_km=sigma_km,
@@ -425,15 +399,80 @@ def quick_search(
         hard_max_radius_km=hard_max_radius_km,
     )
 
-    # Filtre côté Python par min_score (ES ne supporte min_score qu'avec certaines configs)
-    relevant_events = [e for e in result["events"] if float(e.get("score") or 0.0) >= min_score]
+    # Ajout du filtre min_score directement dans ES
+    body["min_score"] = TRES_PERTINENT_THRESHOLD
+
+    try:
+        res = es_client.search(index=INDEX, body=body)
+    except ApiError as e:
+        detail = getattr(e, "info", None) or str(e)
+        raise HTTPException(status_code=400, detail={"elasticsearch_error": detail})
+
+    hits = res.get("hits", {}).get("hits", [])
+    total_es = res.get("hits", {}).get("total", {})
+    total_count = int(total_es.get("value", 0)) if isinstance(total_es, dict) else int(total_es or 0)
+
+    event_ids: List[int] = []
+    meta_by_id: Dict[int, Dict[str, Any]] = {}
+
+    for h in hits:
+        src = h.get("_source") or {}
+        raw_event_id = src.get("event_id") or h.get("_id")
+        try:
+            eid = int(raw_event_id)
+        except Exception:
+            continue
+
+        score = float(h.get("_score") or 0.0)
+
+        distance_km = None
+        fields = h.get("fields") or {}
+        if isinstance(fields, dict) and "distance_km" in fields:
+            v = fields.get("distance_km")
+            if isinstance(v, list) and v:
+                try:
+                    distance_km = float(v[0])
+                except Exception:
+                    distance_km = None
+
+        event_ids.append(eid)
+        meta_by_id[eid] = {"score": score, "distance_km": distance_km}
+
+    events_db = fetch_events_with_relations_by_ids(event_ids)
+
+    db_by_id: Dict[int, dict] = {}
+    for ev in events_db:
+        raw_id = ev.get("id") or ev.get("event_id") or ev.get("eventId") or ev.get("_id")
+        try:
+            db_by_id[int(raw_id)] = ev
+        except Exception:
+            continue
+
+    merged: List[dict] = []
+    for eid in event_ids:
+        ev = db_by_id.get(eid)
+        if not ev:
+            continue
+
+        meta = meta_by_id.get(eid, {})
+        score = float(meta.get("score", 0.0))
+        distance_km = meta.get("distance_km", None)
+
+        merged.append({
+            **ev,
+            "score": score,
+            "distance_km": distance_km,
+            "relevance": _relevance_label(score),
+            "distance_label": _distance_penalty_label(distance_km, soft_radius_km),
+        })
+
+    merged.sort(key=lambda e: float(e.get("score") or 0.0), reverse=True)
 
     return {
-        "count": len(relevant_events),
-        "total_count": total,
-        "events": relevant_events,
+        "count": len(merged),
+        "total_count": total_count,
+        "events": merged,
     }
-
 
 
 def debug_es():
