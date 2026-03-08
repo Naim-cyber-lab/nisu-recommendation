@@ -370,37 +370,32 @@ def search(
 @router.get("/quick-search")
 def quick_search(
     q: str = Query("", description="Texte de recherche"),
-    lat: Optional[float] = Query(None),
-    lon: Optional[float] = Query(None),
-    sigma_km: float = Query(15.0, ge=0.1, le=100.0),
-    geo_weight: float = Query(1.0, ge=0.0, le=10.0),
     vec_weight: float = Query(1.0, ge=0.0, le=10.0),
-    soft_radius_km: float = Query(10.0, ge=1.0, le=300.0),
-    hard_max_radius_km: Optional[float] = Query(None, ge=1.0, le=1000.0),
 ):
     """
-    Recherche rapide sans pagination — utilisée par le front mobile.
-    Retourne uniquement les événements TRÈS_PERTINENT (score >= 2.5),
+    Recherche rapide sans pagination, sans géolocalisation — utilisée par le front mobile.
+    Retourne uniquement les événements pertinents (score >= 1.8),
     triés par score décroissant, sans dépasser 500 résultats.
     """
-    TRES_PERTINENT_THRESHOLD = 1.8
+    THRESHOLD = 1.8
     MAX_FETCH = 500
 
     body = _build_query(
         q=q,
         from_=0,
         size=MAX_FETCH,
-        lat=lat,
-        lon=lon,
-        sigma_km=sigma_km,
-        geo_weight=geo_weight,
+        lat=None,       # ✅ pas de géo
+        lon=None,       # ✅ pas de géo
+        sigma_km=15.0,
+        geo_weight=0.0, # ✅ poids géo à 0
         vec_weight=vec_weight,
-        soft_radius_km=soft_radius_km,
-        hard_max_radius_km=hard_max_radius_km,
+        soft_radius_km=10.0,
+        hard_max_radius_km=None,
     )
 
-    # Ajout du filtre min_score directement dans ES
-    body["min_score"] = TRES_PERTINENT_THRESHOLD
+    # Score basé uniquement sur les fonctions (vecteurs + boost field), sans score query de base
+    body["query"]["function_score"]["boost_mode"] = "replace"
+    body["min_score"] = THRESHOLD
 
     try:
         res = es_client.search(index=INDEX, body=body)
@@ -424,19 +419,8 @@ def quick_search(
             continue
 
         score = float(h.get("_score") or 0.0)
-
-        distance_km = None
-        fields = h.get("fields") or {}
-        if isinstance(fields, dict) and "distance_km" in fields:
-            v = fields.get("distance_km")
-            if isinstance(v, list) and v:
-                try:
-                    distance_km = float(v[0])
-                except Exception:
-                    distance_km = None
-
         event_ids.append(eid)
-        meta_by_id[eid] = {"score": score, "distance_km": distance_km}
+        meta_by_id[eid] = {"score": score, "distance_km": None}
 
     events_db = fetch_events_with_relations_by_ids(event_ids)
 
@@ -454,16 +438,12 @@ def quick_search(
         if not ev:
             continue
 
-        meta = meta_by_id.get(eid, {})
-        score = float(meta.get("score", 0.0))
-        distance_km = meta.get("distance_km", None)
+        score = float(meta_by_id.get(eid, {}).get("score", 0.0))
 
         merged.append({
             **ev,
             "score": score,
-            "distance_km": distance_km,
             "relevance": _relevance_label(score),
-            "distance_label": _distance_penalty_label(distance_km, soft_radius_km),
         })
 
     merged.sort(key=lambda e: float(e.get("score") or 0.0), reverse=True)
@@ -473,7 +453,6 @@ def quick_search(
         "total_count": total_count,
         "events": merged,
     }
-
 
 def debug_es():
     info = es_client.info()
