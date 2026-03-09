@@ -452,7 +452,7 @@ def quick_search(
         src = h.get("_source") or {}
         score = float(h.get("_score") or 0.0)
 
-        if score < 1.2:  # filtre PERTINENT minimum
+        if score < 2.2:  # filtre PERTINENT minimum
             continue
 
         raw_event_id = src.get("event_id") or h.get("_id")
