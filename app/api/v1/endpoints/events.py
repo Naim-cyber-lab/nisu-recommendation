@@ -24,11 +24,12 @@ def _to_float_list(vec) -> List[float]:
 
 
 def _relevance_label(score: float) -> str:
-    if score >= 2.5:
+    # Seuils calibrés pour boost_mode="sum" (BM25 + vecteurs + géo additionnés)
+    if score >= 8.0:
         return "TRÈS_PERTINENT"
-    if score >= 1.2:
+    if score >= 4.0:
         return "PERTINENT"
-    if score >= 0.5:
+    if score >= 2.0:
         return "MOYEN"
     return "FAIBLE"
 
@@ -61,52 +62,113 @@ def _build_query(
     sigma_km: float,
     geo_weight: float,
     vec_weight: float,
-    soft_radius_km: float,  # plateau géo : jusqu'ici pas de pénalité
+    soft_radius_km: float,
     hard_max_radius_km: Optional[float],
     source_includes: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     q = (q or "").strip()
     is_query_empty = len(q) == 0
 
-    # Match-all garanti (même si aucun should ne matche)
+    source_includes = source_includes or ["event_id"]
+
+    # ── Base query ────────────────────────────────────────────────────────────
     if is_query_empty:
+        # Pas de query texte : on prend tout, trié par boost + géo
         base_query: Dict[str, Any] = {"match_all": {}}
     else:
+        # Quand une query est fournie :
+        # - must : multi_match avec cross_fields + phrase pour garantir la présence des mots
+        #   → les events qui ne contiennent PAS les mots sont EXCLUS
+        # - should : bonus si phrase exacte dans le titre
+        # - minimum_should_match sur must : "and" => tous les termes obligatoires
         base_query = {
             "bool": {
-                "must": [{"match_all": {}}],
-                "should": [
-                    {"match": {"titre": {"query": q, "boost": 2}}},
-                    {"match": {"bio": {"query": q}}},
+                "must": [
+                    {
+                        "multi_match": {
+                            "query": q,
+                            "fields": ["titre^3", "titre_fr^3", "bio^1.5", "bio_fr^1.5", "preferences^1"],
+                            "type": "best_fields",
+                            "operator": "and",         # ← TOUS les mots obligatoires
+                            "fuzziness": "AUTO",        # tolérance aux fautes de frappe
+                            "minimum_should_match": "75%",
+                        }
+                    }
                 ],
-                "minimum_should_match": 0,
+                "should": [
+                    # Bonus phrase exacte dans le titre
+                    {
+                        "match_phrase": {
+                            "titre": {"query": q, "boost": 3.0, "slop": 1}
+                        }
+                    },
+                    {
+                        "match_phrase": {
+                            "titre_fr": {"query": q, "boost": 3.0, "slop": 1}
+                        }
+                    },
+                    # Bonus phrase dans la bio
+                    {
+                        "match_phrase": {
+                            "bio_fr": {"query": q, "boost": 1.5, "slop": 2}
+                        }
+                    },
+                ],
             }
         }
 
+        # Filtre géo hard (si demandé)
+        if hard_max_radius_km is not None and lat is not None and lon is not None:
+            base_query["bool"].setdefault("filter", []).append(
+                {
+                    "geo_distance": {
+                        "distance": f"{float(hard_max_radius_km)}km",
+                        "localisation": {"lat": float(lat), "lon": float(lon)},
+                    }
+                }
+            )
+
+    # Filtre géo hard sur match_all aussi
+    if is_query_empty and hard_max_radius_km is not None and lat is not None and lon is not None:
+        base_query = {
+            "bool": {
+                "must": [{"match_all": {}}],
+                "filter": [
+                    {
+                        "geo_distance": {
+                            "distance": f"{float(hard_max_radius_km)}km",
+                            "localisation": {"lat": float(lat), "lon": float(lon)},
+                        }
+                    }
+                ],
+            }
+        }
+
+    # ── Vecteurs ──────────────────────────────────────────────────────────────
     vector = _to_float_list(embed_text(q)) if not is_query_empty else []
     use_vectors = len(vector) == VECTOR_DIMS
 
     has_geo = lat is not None and lon is not None
 
-    source_includes = source_includes or ["event_id"]
-
     functions: List[Dict[str, Any]] = []
 
-    # 1) VECTEURS
+    # 1) Score vectoriel — boost sémantique (NE filtre pas, booste seulement)
     vec_script = """
       double s = 0.0;
-      if (params.useVec == false) return 0.0;
+      if (params.useVec == false) return 1.0;
 
       if (doc['titre_vector'].size() != 0) {
-        s += cosineSimilarity(params.q, 'titre_vector') * 2.0;
+        double sim = cosineSimilarity(params.q, 'titre_vector');
+        s += sim * 2.5;
       }
       if (doc['bio_vector'].size() != 0) {
-        s += cosineSimilarity(params.q, 'bio_vector');
+        s += cosineSimilarity(params.q, 'bio_vector') * 1.5;
       }
       if (doc['preferences_vector'].size() != 0) {
         s += cosineSimilarity(params.q, 'preferences_vector');
       }
-      return s;
+      // On normalise pour que le facteur reste raisonnable (0..1 environ)
+      return Math.max(0.01, s / 5.0);
     """
     functions.append(
         {
@@ -120,19 +182,13 @@ def _build_query(
         }
     )
 
-    # 2) GEO: plateau proche puis chute après soft_radius_km
+    # 2) Géo
     script_fields: Dict[str, Any] = {}
     if has_geo:
         geo_script = """
-          // Renvoie un FACTEUR (0..1)
-          // - dans soft_km => 1.0 (pas de pénalité)
-          // - au-delà => exp(-((d-soft)/falloff)^2)
           if (doc['localisation'].size() == 0) return 1.0;
-
           double dKm = doc['localisation'].arcDistance(params.lat, params.lon) / 1000.0;
-
           if (dKm <= params.soft_km) return 1.0;
-
           double x = (dKm - params.soft_km) / params.falloff_km;
           return Math.exp(-1.0 * x * x);
         """
@@ -163,35 +219,7 @@ def _build_query(
             }
         }
 
-        # Option HARD (filtre dur)
-        if hard_max_radius_km is not None:
-            base_bool = base_query.get("bool") if isinstance(base_query, dict) else None
-            if isinstance(base_bool, dict):
-                base_bool.setdefault("filter", [])
-                base_bool["filter"].append(
-                    {
-                        "geo_distance": {
-                            "distance": f"{float(hard_max_radius_km)}km",
-                            "localisation": {"lat": float(lat), "lon": float(lon)},
-                        }
-                    }
-                )
-            else:
-                base_query = {
-                    "bool": {
-                        "must": [{"match_all": {}}],
-                        "filter": [
-                            {
-                                "geo_distance": {
-                                    "distance": f"{float(hard_max_radius_km)}km",
-                                    "localisation": {"lat": float(lat), "lon": float(lon)},
-                                }
-                            }
-                        ],
-                    }
-                }
-
-    # 3) boost field
+    # 3) Boost field
     functions.append(
         {
             "field_value_factor": {
@@ -203,8 +231,9 @@ def _build_query(
         }
     )
 
-    # score_mode="sum" : addition des composantes (vecteurs + geo-factor + boost-field)
-    # boost_mode="multiply" : applique le multiplicateur global (inclut bien la pénalité geo via facteur 0..1)
+    # score_mode="sum" : addition des composantes
+    # boost_mode="sum" : additionne le score BM25 (qui filtre) + les fonctions (qui boostent)
+    # → le BM25 est le FILTRE principal, les fonctions sont des bonus
     body: Dict[str, Any] = {
         "track_total_hits": True,
         "from": from_,
@@ -215,7 +244,7 @@ def _build_query(
                 "query": base_query,
                 "functions": functions,
                 "score_mode": "sum",
-                "boost_mode": "multiply",
+                "boost_mode": "sum",   # ← "sum" au lieu de "multiply" : BM25 + bonus vecteurs/géo
             }
         },
     }
@@ -451,9 +480,6 @@ def quick_search(
     for h in hits:
         src = h.get("_source") or {}
         score = float(h.get("_score") or 0.0)
-
-        if score < 2.2:  # filtre PERTINENT minimum
-            continue
 
         raw_event_id = src.get("event_id") or h.get("_id")
         try:
