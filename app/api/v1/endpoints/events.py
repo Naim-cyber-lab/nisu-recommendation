@@ -43,6 +43,15 @@ def _distance_penalty_label(distance_km: Optional[float], soft_radius_km: float)
     return "LOIN" if distance_km > soft_radius_km else None
 
 
+# Champs ES renvoyés pour le quick-search (sans DB)
+QUICK_SEARCH_SOURCE = [
+    "event_id", "titre", "titre_fr", "bio", "bio_fr",
+    "preferences", "boost", "localisation", "thumbnails", "image", "video",
+    "winkerId",
+    "priceEvent", "prixInitial", "prixReduction", "containReduction", "isFree", "price_summary",
+]
+
+
 def _build_query(
     q: str,
     from_: int,
@@ -54,6 +63,7 @@ def _build_query(
     vec_weight: float,
     soft_radius_km: float,  # plateau géo : jusqu'ici pas de pénalité
     hard_max_radius_km: Optional[float],
+    source_includes: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     q = (q or "").strip()
     is_query_empty = len(q) == 0
@@ -78,7 +88,7 @@ def _build_query(
 
     has_geo = lat is not None and lon is not None
 
-    source_includes = ["event_id"]
+    source_includes = source_includes or ["event_id"]
 
     functions: List[Dict[str, Any]] = []
 
@@ -406,22 +416,26 @@ def quick_search(
     q: str = Query("", description="Texte de recherche"),
     vec_weight: float = Query(1.0, ge=0.0, le=10.0),
 ):
+    """
+    Recherche rapide 100% ES — pas d'appel DB.
+    Retourne les champs indexés directement depuis Elasticsearch.
+    """
     MAX_FETCH = 500
 
     body = _build_query(
         q=q,
         from_=0,
         size=MAX_FETCH,
-        lat=48.8566,     # ✅ Paris center — juste pour activer le script ES
-        lon=2.3522,      # ✅ geo_weight=0 donc aucun impact sur le score
+        lat=48.8566,
+        lon=2.3522,
         sigma_km=15.0,
-        geo_weight=0.0,  # ✅ poids géo à 0 = pas d'effet sur le ranking
+        geo_weight=0.0,
         vec_weight=vec_weight,
         soft_radius_km=10.0,
         hard_max_radius_km=None,
+        source_includes=QUICK_SEARCH_SOURCE,  # ← tous les champs utiles
     )
 
-    # Pas de min_score ni de boost_mode override — même mécanique que /search
     try:
         res = es_client.search(index=INDEX, body=body)
     except ApiError as e:
@@ -432,50 +446,59 @@ def quick_search(
     total_es = res.get("hits", {}).get("total", {})
     total_count = int(total_es.get("value", 0)) if isinstance(total_es, dict) else int(total_es or 0)
 
-    event_ids: List[int] = []
-    meta_by_id: Dict[int, Dict[str, Any]] = {}
+    merged: List[dict] = []
 
     for h in hits:
         src = h.get("_source") or {}
-        raw_event_id = src.get("event_id") or h.get("_id")
-        try:
-            eid = int(raw_event_id)
-        except Exception:
-            continue
         score = float(h.get("_score") or 0.0)
-        event_ids.append(eid)
-        meta_by_id[eid] = {"score": score}
 
-    events_db = fetch_events_with_relations_by_ids(event_ids)
-
-    db_by_id: Dict[int, dict] = {}
-    for ev in events_db:
-        raw_id = ev.get("id") or ev.get("event_id") or ev.get("eventId") or ev.get("_id")
-        try:
-            db_by_id[int(raw_id)] = ev
-        except Exception:
-            continue
-
-    merged: List[dict] = []
-    for eid in event_ids:
-        ev = db_by_id.get(eid)
-        if not ev:
-            continue
-        score = float(meta_by_id.get(eid, {}).get("score", 0.0))
         if score < 1.2:  # filtre PERTINENT minimum
             continue
+
+        raw_event_id = src.get("event_id") or h.get("_id")
+        try:
+            event_id = int(raw_event_id)
+        except Exception:
+            continue
+
+        # Localisation ES → lat/lng
+        loc = src.get("localisation") or {}
+        lat_val = loc.get("lat") if isinstance(loc, dict) else None
+        lon_val = loc.get("lon") if isinstance(loc, dict) else None
+
         merged.append({
-            **ev,
-            "score": score,
-            "relevance": _relevance_label(score),
+            "id":               event_id,
+            "event_id":         event_id,
+            "titre":            src.get("titre") or "",
+            "titre_fr":         src.get("titre_fr") or "",
+            "bio":              src.get("bio") or "",
+            "bio_fr":           src.get("bio_fr") or "",
+            "preferences":      src.get("preferences") or [],
+            "boost":            src.get("boost") or 0,
+            "lat":              lat_val,
+            "lng":              lon_val,
+            "thumbnails":       src.get("thumbnails") or [],
+            "image":            src.get("image") or [],
+            "video":            src.get("video") or [],
+            "winkerId":         src.get("winkerId"),
+            # Prix
+            "priceEvent":       src.get("priceEvent"),
+            "prixInitial":      src.get("prixInitial"),
+            "prixReduction":    src.get("prixReduction"),
+            "containReduction": src.get("containReduction") or False,
+            "isFree":           src.get("isFree") or False,
+            "price_summary":    src.get("price_summary"),
+            # Meta
+            "score":            score,
+            "relevance":        _relevance_label(score),
         })
 
     merged.sort(key=lambda e: float(e.get("score") or 0.0), reverse=True)
 
     return {
-        "count": len(merged),
+        "count":       len(merged),
         "total_count": total_count,
-        "events": merged,
+        "events":      merged,
     }
 
 def debug_es():
