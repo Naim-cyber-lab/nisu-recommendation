@@ -49,6 +49,7 @@ SELECT
     e."nb_conversations",
     e."thumbnails",
     e."nbStories",
+    e.google_reviews,
 
     to_jsonb(cw.*) AS "creatorWinker",
     '[]'::jsonb AS participants,
