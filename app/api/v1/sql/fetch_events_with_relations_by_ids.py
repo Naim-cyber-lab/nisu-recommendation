@@ -50,6 +50,7 @@ SELECT
     e."thumbnails",
     e."nbStories",
     e.google_reviews,
+    e.price_summary,
 
     to_jsonb(cw.*) AS "creatorWinker",
     '[]'::jsonb AS participants,
