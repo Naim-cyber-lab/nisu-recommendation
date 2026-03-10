@@ -50,6 +50,7 @@ QUICK_SEARCH_SOURCE = [
     "preferences", "boost", "localisation", "thumbnails", "image", "video",
     "winkerId",
     "priceEvent", "prixInitial", "prixReduction", "containReduction", "isFree", "price_summary",
+    "google_reviews",
 ]
 
 
@@ -282,6 +283,8 @@ def search_events_paginated(
         vec_weight=vec_weight,
         soft_radius_km=soft_radius_km,
         hard_max_radius_km=hard_max_radius_km,
+        # On récupère google_reviews depuis ES pour l'injecter dans la réponse
+        source_includes=["event_id", "google_reviews"],
     )
 
     try:
@@ -318,7 +321,11 @@ def search_events_paginated(
                     distance_km = None
 
         event_ids.append(eid)
-        meta_by_id[eid] = {"score": score, "distance_km": distance_km}
+        meta_by_id[eid] = {
+            "score": score,
+            "distance_km": distance_km,
+            "google_reviews": src.get("google_reviews") or [],
+        }
 
     events_db = fetch_events_with_relations_by_ids(event_ids)
 
@@ -343,6 +350,7 @@ def search_events_paginated(
         merged.append(
             {
                 **ev,
+                "google_reviews":  meta.get("google_reviews", []),
                 "score": score,
                 "distance_km": distance_km,
                 # ✅ uniquement le score final ES
@@ -514,6 +522,8 @@ def quick_search(
             "containReduction": src.get("containReduction") or False,
             "isFree":           src.get("isFree") or False,
             "price_summary":    src.get("price_summary"),
+            # Google Reviews
+            "google_reviews":   src.get("google_reviews") or [],
             # Meta
             "score":            score,
             "relevance":        _relevance_label(score),
